@@ -24,9 +24,14 @@ holds and tests without a display:
     computed before a refusal stay;
 (e) the net-class write: the proposals the results support, the preview, the
     confirmed write and the restore, all through :mod:`rftools_kicad.netclasses`.
+    On a KiCad that cannot take a write (10.0.6 and earlier, or a version
+    that cannot be read) the write mode is :data:`MANUAL`: the preview is
+    still made, marked with the reason, for entering the values by hand in
+    Board Setup, and nothing is written or restored.
 
 ``services`` is ``main.Services``: ``api()``, ``save_key(key)``, ``settings``,
-``options``, ``grid``, ``cache``, ``key_url``, ``history_path``, ``project``.
+``options``, ``grid``, ``cache``, ``key_url``, ``history_path``, ``kicad``,
+``board``, ``project``.
 """
 from __future__ import annotations
 
@@ -81,6 +86,12 @@ SKIPPED = "skipped"
 
 #: The largest manufacturing grid accepted, mm.
 MAX_GRID_MM = 1.0
+
+#: How net-class values reach KiCad (:meth:`DialogState.write_mode`).
+WRITE = "write"  # the plugin writes them, after a preview and a confirmation
+MANUAL = "manual"  # this KiCad cannot take a write: the user enters them in Board Setup
+
+_UNREAD = object()
 
 PLANE_SOURCE_TEXT = {
     PLANES_FROM_ADJACENCY: (
@@ -201,6 +212,7 @@ class DialogState:
         self.refusals: tuple = ()
         self.results_stale = False
         self._api: Api | None = None
+        self._kicad_version: Any = _UNREAD
 
     # ── (a) The layer model ──────────────────────────────────────────────────
 
@@ -676,13 +688,34 @@ class DialogState:
                 proposals[nc.name] = fields
         return proposals, notes
 
+    def kicad_version(self) -> tuple | None:
+        """KiCad's ``(major, minor, patch)``, read once (``services.kicad.get_version()``)."""
+        if self._kicad_version is _UNREAD:
+            self._kicad_version = N.kicad_version(getattr(self.services, "kicad", None))
+        return self._kicad_version
+
     def write_availability(self) -> tuple:
-        return N.availability(self.services.project)
+        return N.availability(self.services.project, self.kicad_version())
+
+    def write_mode(self) -> tuple:
+        """``(WRITE, None)``, ``(MANUAL, why the values are entered by hand)`` or
+        ``(None, why neither)`` (no project, or kicad-python cannot send the write)."""
+        project = self.services.project
+        if project is not None:
+            blocked = N.write_blocked(self.kicad_version())
+            if blocked is not None:
+                return MANUAL, blocked
+        method, reason = self.write_availability()
+        return (WRITE, None) if method is not None else (None, reason)
 
     def preview(self) -> tuple:
-        """``(netclasses.Preview, None)`` or ``(None, why nothing can be written)``."""
-        method, reason = self.write_availability()
-        if method is None:
+        """``(netclasses.Preview, None)`` or ``(None, why there is nothing to preview)``.
+
+        In :data:`MANUAL` mode the preview's ``manual`` holds the reason: it is
+        for entering the values in Board Setup, and :meth:`apply` refuses it.
+        """
+        mode, reason = self.write_mode()
+        if mode is None:
             return None, reason
         proposals, notes = self.proposals()
         if not proposals:
@@ -697,14 +730,17 @@ class DialogState:
             return None, f"Could not read the net classes from KiCad ({type(exc).__name__}: {exc})."
         if preview.empty:
             return None, "Every selected class already has the proposed values."
+        if mode == MANUAL:
+            preview = replace(preview, manual=reason)
         return preview, None
 
     def apply(self, preview: N.Preview, confirm: Callable[[N.Preview], bool]) -> N.WriteResult:
         project = self.services.project
         try:
             result = N.apply(
-                project, preview, confirm, history_file=self.services.history_path,
-                project_key=N.project_path(project),
+                project, preview, confirm, version=self.kicad_version(),
+                board=getattr(self.services, "board", None),
+                history_file=self.services.history_path, project_key=N.project_path(project),
             )
         except Exception as exc:  # a connection lost mid-write, for one
             return N.WriteResult(False, f"The write failed ({type(exc).__name__}: {exc}).")
@@ -713,17 +749,22 @@ class DialogState:
         return result
 
     def restore_preview(self) -> tuple:
-        method, reason = self.write_availability()
-        if method is None:
+        """As :meth:`preview`, for writing back the latest write. The history is
+        read in :data:`MANUAL` mode too, and the values shown for entering by hand."""
+        mode, reason = self.write_mode()
+        if mode is None:
             return None, reason
         project = self.services.project
         try:
-            return N.restore_preview(
+            preview, why = N.restore_preview(
                 project, history_file=self.services.history_path,
                 project_key=N.project_path(project),
             )
         except Exception as exc:
             return None, f"Could not prepare the restore ({type(exc).__name__}: {exc})."
+        if preview is not None and mode == MANUAL:
+            preview = replace(preview, manual=reason)
+        return preview, why
 
     def reload_netclasses(self) -> None:
         """Read the classes again after a write, so the current values shown are KiCad's."""

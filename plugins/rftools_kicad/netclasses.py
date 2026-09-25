@@ -7,23 +7,33 @@ previewed, reversible and limited"):
   each selected class, every field that would change: current and proposed
   track width, differential-pair width and differential-pair gap. Only those
   three fields are ever written.
+* **Only a KiCad later than 10.0.6 is written to** (:data:`FIRST_SAFE_WRITE_AFTER`,
+  :func:`write_blocked`). KiCad 10.0.6 and earlier corrupt a class written
+  through the API, and a KiCad whose version cannot be read is treated the
+  same. There the preview is still made, marked ``manual`` with the reason, so
+  the user can enter the values in Board Setup by hand; nothing is sent, and
+  Restore is unavailable too (the history stays readable).
 * :func:`apply` writes nothing until ``confirm(preview)`` returns True. It then
   re-reads the classes and refuses if any listed value changed in KiCad since
-  the preview, records the previous values in the history file, and sends each
-  changed class **whole, as read**, with only the three fields changed,
-  ``type = NCT_EXPLICIT`` and ``constituents`` cleared, merge mode
-  ``MMM_MERGE``. KiCad 10.0 reports every project class as ``NCT_IMPLICIT``
-  with itself as its one constituent, and ``NETCLASS::Deserialize`` refuses an
-  implicit class: a class sent back exactly as read is dropped while
-  ``SetNetClasses`` still answers success (spike, 2026-09-25).
+  the preview, counts each class's nets, records the previous values in the
+  history file, and sends each changed class **whole, as read**, with only the
+  three fields changed, ``type = NCT_EXPLICIT`` and ``constituents`` cleared,
+  merge mode ``MMM_MERGE``. ``NETCLASS::Deserialize`` refuses an implicit
+  class: KiCad 10.0.6 drops one silently while ``SetNetClasses`` answers
+  success (spike, 2026-09-25), and a KiCad with commit d622c37a answers
+  AS_BAD_REQUEST.
 * The write goes through ``Project.set_net_classes`` where kicad-python has it
   (0.9 and later), else through kicad-python 0.8's ``SetNetClasses`` message on
   the project's command channel. Neither available, or KiCad refusing the
   command, and the write is reported unavailable with the reason.
-* Because KiCad answers success even when it ignored a class, every write is
-  verified by reading the classes again: the three fields must hold the
-  proposed values and every other field of every class must be unchanged.
-  Anything else is reported as not applied.
+* Because KiCad has answered success while ignoring or corrupting a class,
+  every write is verified by reading the classes and the nets again
+  (:func:`verify`): the three fields must hold the proposed values, every
+  other setting of every class must be unchanged, each written class must
+  still list itself as its only constituent and hold as many nets as before.
+  A class that is not intact is reported with "Do not save the board"; a
+  write that changed nothing, or only landed other values in the three
+  fields, is reported as not applied.
 * ``<user config dir>/rftools-kicad/history.json`` keeps every write per
   project path. :func:`restore_preview` and :func:`restore` write the previous
   values of the latest write not yet restored back the same way, and record
@@ -43,6 +53,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from rftools_kicad.api import RECREATE_ENVIRONMENT
 from rftools_kicad.settings import history_path as default_history_path
 from rftools_kicad.settings import write_private_json
 from rftools_kicad.stackup import NM_PER_MM
@@ -59,6 +70,12 @@ FIELD_LABELS = {
     DIFF_PAIR_WIDTH: "Diff pair width",
     DIFF_PAIR_GAP: "Diff pair gap",
 }
+#: The three fields as Board Setup › Net Classes names its columns, for entering them by hand.
+BOARD_SETUP_COLUMNS = {
+    TRACK_WIDTH: "Track Width",
+    DIFF_PAIR_WIDTH: "DP Width",
+    DIFF_PAIR_GAP: "DP Gap",
+}
 
 METHOD_SET_NET_CLASSES = "Project.set_net_classes"
 METHOD_COMMAND = "SetNetClasses command"
@@ -69,19 +86,55 @@ ACTION_RESTORE = "restore"
 STATUS_SENDING = "sending"
 STATUS_APPLIED = "applied"
 STATUS_NOT_APPLIED = "not applied"  # KiCad answered, and nothing changed
-STATUS_MISMATCH = "mismatch"  # KiCad answered, and the classes are not as sent
-STATUS_REFUSED = "refused"  # KiCad refused the command
+STATUS_MISMATCH = "mismatch"  # only the three fields hold other values than sent
+STATUS_REFUSED = "refused"  # KiCad refused the command, and nothing changed
+#: A class read back is not intact (it lost its constituent or nets, another of
+#: its settings changed, a class appeared or went), or the classes could not be
+#: read back at all: the board must not be saved.
+STATUS_DAMAGED = "damaged"
 
-#: Writes whose previous values can be written back.
+#: Writes whose previous values can be written back. A damaged write is not:
+#: the user is told to close the board without saving, which discards it.
 RESTORABLE = (STATUS_APPLIED, STATUS_MISMATCH)
 
 NO_PROJECT_KEY = "(no project path)"
 
 HISTORY_VERSION = 1
 
-UPDATE_KICAD_PYTHON = (
-    "Update kicad-python to 0.9 or later (right-click the plugin's action in the PCB "
-    "Editor's preferences and choose Recreate Plugin Environment)."
+UPDATE_KICAD_PYTHON = f"Update kicad-python to 0.9 or later ({RECREATE_ENVIRONMENT})."
+
+# ── Which KiCad can take a write ─────────────────────────────────────────────
+
+#: Net classes are written only to a KiCad strictly later than this.
+#:
+#: In KiCad 10.0.6 (tagged 2026-08-28) and earlier, ``NETCLASS::Deserialize``
+#: calls ``SetConstituentNetclasses({})``, so a class written through the API
+#: stops listing itself as its constituent: ``GetNets`` filtered by the class
+#: drops to no nets (26 to 0 in the spike), writing the old values back does
+#: not repair it, and the next save hangs KiCad on Linux and crashes it on
+#: Windows (spike, 2026-09-25). KiCad commit d622c37a ("API: Fix handling of
+#: netclasses", 2026-09-22, cherry-picked to the 10.0 branch) keeps the class
+#: as its own constituent and answers AS_BAD_REQUEST for a class it cannot
+#: unpack. No release tag held it on 2026-09-25, so the first release with it
+#: is a later 10.0.x or 11.x. A development build numbered above 10.0.6 but
+#: built before the fix passes this gate; :func:`verify` catches that write.
+FIRST_SAFE_WRITE_AFTER = (10, 0, 6)
+
+#: A written class's type as a KiCad with d622c37a reports it
+#: (``NETCLASS::Serialize``: NCT_EXPLICIT for at most one constituent). Checked
+#: and logged, never failed on.
+TYPE_AFTER_WRITE = "NCT_EXPLICIT"
+
+WRITE_CORRUPTS = (
+    "KiCad 10.0.6 and earlier corrupt a net class written through the API: the class "
+    "loses its nets, and the next save can hang or crash KiCad. Enter the values in "
+    "Board Setup › Net Classes instead; writing from the plugin turns on with the next "
+    "KiCad release."
+)
+
+DO_NOT_SAVE = (
+    "The write did not apply correctly. Do not save the board; close it without saving "
+    "and reopen it."
 )
 
 
@@ -142,28 +195,37 @@ class ClassPreview:
     current: dict
     proposed: dict
 
-    def rows(self) -> list:
-        """``(field label, current text, proposed text, changes)`` for each of the three fields."""
+    def rows(self, labels: Mapping[str, str] = FIELD_LABELS) -> list:
+        """``(field label, current text, proposed text, changes)`` for each of the three fields.
+
+        Values are in mm, as Board Setup shows them; *labels* names the fields
+        (:data:`BOARD_SETUP_COLUMNS` for Board Setup's own column names).
+        """
         rows = []
         for name in FIELDS:
             current = self.current.get(name)
             if name in self.proposed and self.proposed[name] != current:
-                rows.append((FIELD_LABELS[name], nm_text(current),
-                             nm_text(self.proposed[name]), True))
+                rows.append((labels[name], nm_text(current), nm_text(self.proposed[name]), True))
             else:
-                rows.append((FIELD_LABELS[name], nm_text(current), "unchanged", False))
+                rows.append((labels[name], nm_text(current), "unchanged", False))
         return rows
 
 
 @dataclass(frozen=True)
 class Preview:
-    """What a write would change. ``changes`` holds only fields whose value changes."""
+    """What a write would change. ``changes`` holds only fields whose value changes.
+
+    ``manual`` is set, to the reason, when this KiCad cannot take the write:
+    the preview is then only for entering the values by hand in Board Setup,
+    and :func:`apply` refuses it.
+    """
 
     changes: tuple
     classes: tuple = ()  # ClassPreview per selected class, in the project's order
     notes: tuple = ()
     action: str = ACTION_APPLY
     restores: str | None = None  # the history entry a restore writes back
+    manual: str | None = None
 
     @property
     def empty(self) -> bool:
@@ -176,6 +238,23 @@ class Preview:
     def text(self) -> str:
         lines = [c.text() for c in self.changes] or ["Nothing would change."]
         return "\n".join(lines + list(self.notes))
+
+    def manual_text(self) -> str:
+        """Every class's three fields, current and to enter, as tab-separated text to copy."""
+        if self.action == ACTION_RESTORE:
+            what = "Previous net-class values recorded by the rftools.io plugin"
+        else:
+            what = "Net-class values proposed by the rftools.io plugin"
+        lines = [
+            f"{what}, to enter in KiCad's Board Setup › Net Classes:",
+            "\t".join(("Net class", "Column", "Current", "Enter")),
+        ]
+        for netclass in self.classes:
+            for column, current, enter, _ in netclass.rows(BOARD_SETUP_COLUMNS):
+                lines.append("\t".join((netclass.netclass, column, current, enter)))
+        if self.notes:
+            lines += [""] + list(self.notes)
+        return "\n".join(lines) + "\n"
 
 
 def make_preview(
@@ -219,10 +298,55 @@ def make_preview(
 # ── Availability ─────────────────────────────────────────────────────────────
 
 
-def availability(project: Any) -> tuple:
-    """``(method, None)`` when a write can be sent, else ``(None, reason)``."""
+def kicad_version(kicad: Any) -> tuple | None:
+    """``(major, minor, patch)`` of the running KiCad, or None when it cannot be read.
+
+    kicad-python 0.8 has it as ``KiCad.get_version()``, a ``KiCadVersion``
+    with ``major``, ``minor`` and ``patch`` (KiCad's ``GetVersion`` command).
+    An empty reply (0.0.0) counts as unread.
+    """
+    getter = getattr(kicad, "get_version", None)
+    if not callable(getter):
+        return None
+    try:
+        reply = getter()
+        version = (int(reply.major), int(reply.minor), int(reply.patch))
+    except Exception as exc:  # no answer, or not a version
+        log.warning("Could not read KiCad's version (%s).", type(exc).__name__)
+        return None
+    return None if version == (0, 0, 0) else version
+
+
+def version_text(version: tuple) -> str:
+    return ".".join(str(part) for part in version[:3])
+
+
+def write_blocked(version: tuple | None) -> str | None:
+    """Why this KiCad must not be sent a net-class write, or None when it may.
+
+    Writes need a version strictly later than :data:`FIRST_SAFE_WRITE_AFTER`;
+    one that cannot be read is treated as too old.
+    """
+    if version is None:
+        return "KiCad's version could not be read, so net classes are not written. " + (
+            WRITE_CORRUPTS
+        )
+    if tuple(version[:3]) <= FIRST_SAFE_WRITE_AFTER:
+        return f"This is KiCad {version_text(version)}. {WRITE_CORRUPTS}"
+    return None
+
+
+def availability(project: Any, version: tuple | None = None) -> tuple:
+    """``(method, None)`` when a write can be sent, else ``(None, reason)``.
+
+    *version* is KiCad's ``(major, minor, patch)`` (:func:`kicad_version`);
+    without it nothing is written (:func:`write_blocked`).
+    """
     if project is None:
         return None, "No KiCad project is open, so net classes cannot be written."
+    blocked = write_blocked(version)
+    if blocked is not None:
+        return None, blocked
     if callable(getattr(project, "set_net_classes", None)):
         return METHOD_SET_NET_CLASSES, None
     try:
@@ -266,18 +390,27 @@ def apply(
     preview: Preview,
     confirm: Callable[[Preview], bool],
     *,
+    version: tuple | None = None,
+    board: Any = None,
     history_file: Path | None = None,
     project_key: str | None = None,
     clock: Callable[[], float] = time.time,
 ) -> WriteResult:
     """Write *preview* once *confirm* approves it; verify it; record it.
 
-    Nothing is sent when the write is unavailable, the preview is empty, the
-    user cancels, or a listed value changed in KiCad since the preview.
+    *version* is KiCad's ``(major, minor, patch)`` (:func:`kicad_version`) and
+    gates the write; *board* is kicad-python's ``Board``, whose nets per
+    written class are counted before and after (:func:`net_counts`).
+
+    Nothing is sent when the write is unavailable (this KiCad included), the
+    preview is empty or only for entering by hand, the user cancels, a listed
+    value changed in KiCad since the preview, or the nets cannot be counted.
     """
-    method, reason = availability(project)
+    method, reason = availability(project, version)
     if method is None:
         return WriteResult(False, reason)
+    if preview.manual:
+        return WriteResult(False, preview.manual)
     if preview.empty:
         return WriteResult(False, "Nothing to write: every value is already as proposed.")
     if not confirm(preview):
@@ -302,16 +435,21 @@ def apply(
             "Nothing was written: the net classes changed in KiCad since the preview ("
             + "; ".join(moved) + "). Review the changes again."
         ))
+    names = preview.class_names
+    try:
+        nets_before = net_counts(board, names)
+    except NetClassWriteError as exc:
+        return WriteResult(False, f"Nothing was written: {exc}.")
 
     wanted = _proposed(preview)
-    to_send = [explicit_copy(by_name[name], wanted[name]) for name in preview.class_names]
+    to_send = [explicit_copy(by_name[name], wanted[name]) for name in names]
     try:
         entry = history.append(key, {
-        "action": preview.action,
-        "at": _iso(clock()),
-        "status": STATUS_SENDING,
-        "method": method,
-        "restores": preview.restores,
+            "action": preview.action,
+            "at": _iso(clock()),
+            "status": STATUS_SENDING,
+            "method": method,
+            "restores": preview.restores,
             "changes": [
                 {"netclass": c.netclass, "field": c.field,
                  "before": c.current_nm, "after": c.proposed_nm}
@@ -327,16 +465,29 @@ def apply(
     try:
         send(project, method, to_send)
     except Exception as exc:
-        history.update_quietly(key, entry["id"], status=STATUS_REFUSED)
         log.warning("KiCad refused the net-class write: %s", type(exc).__name__)
+        refused = f"KiCad refused the write ({type(exc).__name__}: {exc})"
+        # KiCad unpacks the classes one by one and changes each in place, so a
+        # refusal part-way can leave the classes before it written: read back.
+        status, problems = _read_back(project, board, before, {}, nets_before)
+        if status == STATUS_APPLIED:  # every class exactly as before
+            history.update_quietly(key, entry["id"], status=STATUS_REFUSED)
+            return WriteResult(
+                False, f"{refused}. Nothing was changed.",
+                status=STATUS_REFUSED, entry_id=entry["id"], method=method, sent=True,
+            )
+        history.update_quietly(key, entry["id"], status=STATUS_DAMAGED, problems=problems)
         return WriteResult(
-            False, f"KiCad refused the write ({type(exc).__name__}: {exc}). Nothing was changed.",
-            status=STATUS_REFUSED, entry_id=entry["id"], method=method, sent=True,
+            False, f"{refused}. {_damaged(problems)}",
+            status=STATUS_DAMAGED, entry_id=entry["id"], method=method, sent=True,
+            problems=tuple(problems),
         )
 
-    after = read_classes(project)
-    status, problems = verify(before, after, wanted)
-    history.update_quietly(key, entry["id"], status=status)
+    status, problems = _read_back(project, board, before, wanted, nets_before)
+    if problems:
+        history.update_quietly(key, entry["id"], status=status, problems=problems)
+    else:
+        history.update_quietly(key, entry["id"], status=status)
     if status == STATUS_APPLIED:
         if preview.action == ACTION_RESTORE and preview.restores:
             history.update_quietly(key, preview.restores, restoredBy=entry["id"])
@@ -349,7 +500,9 @@ def apply(
             "The previous values are recorded; Restore writes them back.",
             status=status, entry_id=entry["id"], method=method, sent=True,
         )
-    if status == STATUS_NOT_APPLIED:
+    if status == STATUS_DAMAGED:
+        message = _damaged(problems)
+    elif status == STATUS_NOT_APPLIED:
         message = (
             "KiCad answered, but the net classes are unchanged: the write was not applied. "
             "This KiCad may not accept net-class changes through its API."
@@ -402,48 +555,108 @@ def explicit_copy(netclass: Any, values: Mapping[str, int | None]) -> Any:
     return message
 
 
-def verify(before: list, after: list, wanted: Mapping[str, Mapping[str, int | None]]) -> tuple:
+def verify(
+    before: list,
+    after: list,
+    wanted: Mapping[str, Mapping[str, int | None]],
+    nets_before: Mapping[str, int] | None = None,
+    nets_after: Mapping[str, int] | None = None,
+) -> tuple:
     """``(status, problems)``: did the re-read classes become exactly what was sent?
 
-    Every class not written must be unchanged; a written class must hold the
-    wanted values in the three fields and be unchanged in every other field.
+    Every class not written must be unchanged. A written class must hold the
+    wanted values in the three fields, be unchanged in every other setting,
+    and still list itself as its only constituent (KiCad 10.0.6 left it with
+    none). Every class in *nets_before* must hold as many nets in *nets_after*.
+    A written class's type is only logged when it is not
+    :data:`TYPE_AFTER_WRITE`.
+
+    :data:`STATUS_APPLIED` when all of that holds (with *wanted* empty: when
+    nothing changed); :data:`STATUS_NOT_APPLIED` when nothing changed at all;
+    :data:`STATUS_MISMATCH` when only the three fields hold other values;
+    :data:`STATUS_DAMAGED` for anything else.
     """
+    from kipy.proto.common.types import project_settings_pb2
+
+    types = project_settings_pb2.NetClassType
     old = {c.name: c for c in before}
     new = {c.name: c for c in after}
-    problems = []
+    damage = []  # a class not intact: the board must not be saved
+    values = []  # the three fields hold other values than sent
     for name in sorted(set(old) - set(new)):
-        problems.append(f"net class {name} disappeared")
+        damage.append(f"net class {name} disappeared")
     for name in sorted(set(new) - set(old)):
-        problems.append(f"net class {name} appeared")
-    landed = unchanged = 0
-    total = 0
+        damage.append(f"net class {name} appeared")
+    unchanged = total = 0
     for name, proto in old.items():
         if name not in new:
             continue
+        got = new[name]
         if name not in wanted:
-            if not _same(proto, new[name]):
-                problems.append(f"net class {name} changed although it was not written")
+            if not _same(proto, got):
+                damage.append(f"net class {name} changed although it was not written")
             continue
-        if not _same(_without_fields(proto), _without_fields(new[name])):
-            problems.append(f"other settings of net class {name} changed")
-        seen = field_values(new[name])
+        constituents = list(got.constituents)
+        if constituents != [name]:
+            damage.append(
+                f"net class {name} no longer lists itself as its only constituent "
+                f"(it lists {', '.join(constituents) or 'none'})"
+            )
+        if types.Name(got.type) != TYPE_AFTER_WRITE:
+            log.warning(
+                "Net class %s reads back as %s after the write, where a KiCad with the fix "
+                "reports %s; not treated as a failure.", name, types.Name(got.type),
+                TYPE_AFTER_WRITE,
+            )
+        if not _same(_other_settings(proto), _other_settings(got)):
+            damage.append(f"other settings of net class {name} changed")
+        seen = field_values(got)
         previous = field_values(proto)
         for key, value in wanted[name].items():
             total += 1
-            if seen[key] == value:
-                landed += 1
-            else:
+            if seen[key] != value:
                 if seen[key] == previous[key]:
                     unchanged += 1
-                problems.append(
+                values.append(
                     f"{name}'s {FIELD_LABELS[key].lower()} is {nm_text(seen[key])}, "
                     f"not {nm_text(value)}"
                 )
-    if not problems:
+    for name, count in (nets_before or {}).items():
+        now = (nets_after or {}).get(name)
+        if now != count:
+            damage.append(f"net class {name} holds {'?' if now is None else now} nets, not {count}")
+    if damage:
+        return STATUS_DAMAGED, damage + values
+    if not values:
         return STATUS_APPLIED, []
-    if unchanged == total and len(problems) == total:
-        return STATUS_NOT_APPLIED, problems
-    return STATUS_MISMATCH, problems
+    if unchanged == total:
+        return STATUS_NOT_APPLIED, values
+    return STATUS_MISMATCH, values
+
+
+def net_counts(board: Any, names: Iterable[str]) -> dict:
+    """``{class: number of nets}`` for each of *names*.
+
+    kicad-python 0.8's ``Board.get_nets(netclass_filter=name)``: KiCad's
+    ``GetNets`` keeps a net when its class lists *name* among its constituents,
+    which is what KiCad 10.0.6's write broke. Raises :class:`NetClassWriteError`
+    when the nets cannot be read.
+    """
+    getter = getattr(board, "get_nets", None)
+    if not callable(getter):
+        raise NetClassWriteError(
+            "the board's nets cannot be read, so the write could not be checked"
+        )
+    counts = {}
+    for name in names:
+        try:
+            counts[name] = len(list(getter(netclass_filter=name)))
+        except Exception as exc:  # KiCad did not answer
+            raise NetClassWriteError(
+                f"the nets of net class {name} could not be read ({type(exc).__name__}: {exc}), "
+                "so the write could not be checked"
+            ) from exc
+    return counts
 
 
 def read_classes(project: Any) -> list:
@@ -504,18 +717,27 @@ def restore(
     project: Any,
     confirm: Callable[[Preview], bool],
     *,
+    version: tuple | None = None,
+    board: Any = None,
     history_file: Path | None = None,
     project_key: str | None = None,
     clock: Callable[[], float] = time.time,
 ) -> WriteResult:
-    """Write back the previous values of the latest write, and record the restore."""
+    """Write back the previous values of the latest write, and record the restore.
+
+    Gated and verified as :func:`apply` is: on a KiCad that cannot take a
+    write nothing is sent, though :func:`restore_preview` still reads the history.
+    """
+    method, reason = availability(project, version)
+    if method is None:
+        return WriteResult(False, reason)
     preview, reason = restore_preview(
         project, history_file=history_file, project_key=project_key
     )
     if preview is None:
         return WriteResult(False, reason)
-    return apply(project, preview, confirm, history_file=history_file,
-                 project_key=project_key, clock=clock)
+    return apply(project, preview, confirm, version=version, board=board,
+                 history_file=history_file, project_key=project_key, clock=clock)
 
 
 # ── The history file ─────────────────────────────────────────────────────────
@@ -526,8 +748,9 @@ class History:
 
     ``{"version": 1, "projects": {"<project path>": [entry, ...]}}``, where an
     entry is ``{id, action, at, status, method, restores, restoredBy?,
-    changes: [{netclass, field, before, after}]}`` and ``before``/``after``
-    are nanometres (``null``: the field was not set). The file is written
+    problems?, changes: [{netclass, field, before, after}]}``, ``before``/``after``
+    are nanometres (``null``: the field was not set) and ``problems`` is what
+    the read-back found when the write is not ``applied``. The file is written
     owner-only, as the settings are.
     """
 
@@ -604,12 +827,35 @@ def _proposed(preview: Preview) -> dict:
     return wanted
 
 
-def _without_fields(proto: Any) -> Any:
+def _other_settings(proto: Any) -> Any:
+    """The class without the three fields, its type and its constituents, which
+    :func:`verify` checks one by one."""
     copy = type(proto)()
     copy.CopyFrom(proto)
     for name in FIELDS:
         copy.board.ClearField(name)
+    copy.ClearField("type")
+    copy.ClearField("constituents")
     return copy
+
+
+def _read_back(
+    project: Any, board: Any, before: list, wanted: Mapping, nets_before: Mapping
+) -> tuple:
+    """:func:`verify` on the classes and nets read again; damaged when they cannot be read."""
+    try:
+        after = read_classes(project)
+        nets_after = net_counts(board, nets_before)
+    except Exception as exc:  # the connection lost, for one
+        detail = str(exc) if isinstance(exc, NetClassWriteError) else (
+            f"the net classes could not be read back ({type(exc).__name__}: {exc})"
+        )
+        return STATUS_DAMAGED, [detail]
+    return verify(before, after, wanted, nets_before, nets_after)
+
+
+def _damaged(problems: Iterable[str]) -> str:
+    return f"{DO_NOT_SAVE} Found after the write: {'; '.join(problems)}."
 
 
 def _same(a: Any, b: Any) -> bool:

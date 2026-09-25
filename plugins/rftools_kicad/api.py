@@ -64,7 +64,7 @@ UPGRADE_URL = "https://rftools.io/pricing"
 
 #: How a user makes KiCad reinstall the plugin's dependencies (KiCad's IPC docs).
 RECREATE_ENVIRONMENT = (
-    "right-click the plugin's action in the PCB Editor's preferences and choose "
+    "right-click the plugin in Preferences › Plugins › Action Plugins and choose "
     "Recreate Plugin Environment"
 )
 

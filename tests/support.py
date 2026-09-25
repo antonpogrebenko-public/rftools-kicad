@@ -384,31 +384,79 @@ def netclass_proto(name: str, **kwargs):
     return kipy_netclass(name, **kwargs).proto
 
 
-class FakeKiCad:
-    """KiCad's command channel as KiCad 10.0.6 answers ``SetNetClasses`` (spike, 2026-09-25).
+#: KiCad 10.0.6, whose API corrupts a net class it is sent (spike, 2026-09-25).
+BROKEN_KICAD = (10, 0, 6)
+#: The first release after it, which the tests take to carry commit d622c37a.
+FIXED_KICAD = (10, 0, 7)
 
-    ``MMM_MERGE`` replaces a named class whole with the one sent; an implicit
-    class is dropped silently (``NETCLASS::Deserialize`` refuses it) and the
-    command still answers success. A class read back is reported implicit with
-    itself as its one constituent, as KiCad reports every project class.
+#: Nets per class in the fakes (the spike's 100ohm class had 26).
+NETS_PER_CLASS = 26
+
+
+class FakeKiCad:
+    """KiCad for the net-class writer: its version, and ``SetNetClasses`` as it answers it.
+
+    It is both the ``KiCad`` object (``get_version()``) and the project's
+    command channel (``send()``). ``version`` picks the behaviour, from
+    KiCad's source (``NETCLASS::Serialize``/``Deserialize`` and
+    ``handleSetNetClasses``, before and after commit d622c37a):
+
+    * 10.0.6 and earlier: a class reads back NCT_IMPLICIT while it has
+      constituents and NCT_EXPLICIT without. An implicit class sent is dropped
+      and the command still answers success; an explicit one is taken whole
+      and left with **no** constituents, so its nets are lost (spike).
+    * later: a class with at most one constituent reads back NCT_EXPLICIT. An
+      implicit class sent is refused (AS_BAD_REQUEST) after the classes before
+      it were taken; an explicit one is taken whole and keeps itself as its one
+      constituent.
+
+    ``MMM_MERGE`` replaces a named class whole. ``nets`` is ``{class: number
+    of nets}`` for :class:`FakeBoard` (default :data:`NETS_PER_CLASS` each).
     ``ignore`` drops every class (a KiCad that answers success and applies
-    nothing); ``refuse`` is raised instead of answering.
+    nothing); ``refuse`` is raised instead of answering; ``version=None``
+    makes ``get_version()`` fail.
     """
 
-    def __init__(self, classes, *, ignore=False, refuse=None, on_send=None):
+    def __init__(self, classes, *, version=FIXED_KICAD, nets=None, ignore=False, refuse=None,
+                 on_send=None):
         from kipy.proto.common.types import project_settings_pb2
 
+        self.version = version
         self.classes = {}
         for proto in classes:
             copy = project_settings_pb2.NetClass()
             copy.CopyFrom(proto)
+            copy.type = self._reported_type(copy)
             self.classes[copy.name] = copy
+        self.nets = dict(nets) if nets is not None else {n: NETS_PER_CLASS for n in self.classes}
         self.sent = []  # every command received, as sent
         self.ignore = ignore
         self.refuse = refuse
         self.on_send = on_send
 
+    @property
+    def broken(self) -> bool:
+        return self.version is not None and tuple(self.version) <= BROKEN_KICAD
+
+    def get_version(self):
+        from kipy.errors import ApiError
+        from kipy.kicad import KiCadVersion
+
+        if self.version is None:
+            raise ApiError("GetVersion is not answered")
+        major, minor, patch = self.version
+        return KiCadVersion(major, minor, patch, f"{major}.{minor}.{patch}")
+
+    def _reported_type(self, proto):
+        from kipy.proto.common.types import project_settings_pb2
+
+        types = project_settings_pb2.NetClassType
+        if self.broken:
+            return types.NCT_IMPLICIT if proto.constituents else types.NCT_EXPLICIT
+        return types.NCT_EXPLICIT if len(proto.constituents) <= 1 else types.NCT_IMPLICIT
+
     def send(self, command, response_type):
+        from kipy.errors import ApiError
         from kipy.proto.common.commands import project_commands_pb2
         from kipy.proto.common.types import MapMergeMode, project_settings_pb2
 
@@ -422,18 +470,46 @@ class FakeKiCad:
         assert isinstance(command, project_commands_pb2.SetNetClasses)
         assert command.merge_mode == MapMergeMode.MMM_MERGE
         for sent in command.net_classes:
-            if self.ignore or sent.type != project_settings_pb2.NetClassType.NCT_EXPLICIT:
+            if self.ignore:
                 continue
+            if sent.type == project_settings_pb2.NetClassType.NCT_IMPLICIT:
+                if self.broken:
+                    continue  # dropped, and the command answers success
+                raise ApiError(f"could not unpack netclass '{sent.name}'")
             stored = project_settings_pb2.NetClass()
             stored.CopyFrom(sent)
-            stored.type = project_settings_pb2.NetClassType.NCT_IMPLICIT
             del stored.constituents[:]
-            stored.constituents.append(sent.name)
+            if not self.broken:
+                stored.constituents.append(sent.name)
+            stored.type = self._reported_type(stored)
             self.classes[sent.name] = stored
         return response_type()
 
     def serialized(self) -> dict:
         return {n: p.SerializeToString(deterministic=True) for n, p in self.classes.items()}
+
+
+class FakeBoard:
+    """kicad-python's ``Board.get_nets(netclass_filter=...)`` over a :class:`FakeKiCad`.
+
+    As KiCad's ``GetNets`` does, a net is in a class when its class lists that
+    class among its constituents: a class left with none holds no nets.
+    ``refuse`` is raised instead of answering.
+    """
+
+    def __init__(self, kicad: FakeKiCad, refuse=None):
+        self.kicad = kicad
+        self.refuse = refuse
+        self.calls = []
+
+    def get_nets(self, netclass_filter=None):
+        self.calls.append(netclass_filter)
+        if self.refuse is not None:
+            raise self.refuse
+        proto = self.kicad.classes.get(netclass_filter)
+        if proto is None or netclass_filter not in proto.constituents:
+            return []
+        return [object() for _ in range(self.kicad.nets.get(netclass_filter, 0))]
 
 
 class FakeProject:
@@ -508,7 +584,7 @@ class FakeServices:
     """``main.Services`` over a :class:`FakeClient`, with every file under *tmp_path*."""
 
     def __init__(self, tmp_path, *, client=None, key=KEY, project=None, grid=0.001,
-                 options=None):
+                 options=None, kicad=None, board=None):
         from rftools_kicad.cache import ResultCache
         from rftools_kicad.mapping import Options
         from rftools_kicad.settings import KEY_URL, SOURCE_SETTINGS, Settings
@@ -525,7 +601,12 @@ class FakeServices:
         self.history_path = tmp_path / "config" / "rftools-kicad" / "history.json"
         self.client = client or FakeClient()
         self.project = project
-        self.kicad = self.board = None
+        # A FakeProject's FakeKiCad is also the KiCad object and backs the board.
+        channel = getattr(project, "_kicad", None)
+        self.kicad = kicad if kicad is not None else channel
+        if board is None and isinstance(channel, FakeKiCad):
+            board = FakeBoard(channel)
+        self.board = board
 
     @property
     def has_key(self):

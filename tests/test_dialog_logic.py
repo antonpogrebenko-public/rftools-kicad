@@ -28,9 +28,12 @@ from rftools_kicad.mapping import (
 from rftools_kicad.settings import KEY_URL
 from rftools_kicad.stackup import from_kipy, layer_model
 from tests.support import (
+    BROKEN_KICAD,
+    FIXED_KICAD,
     KEY,
     PROVENANCE,
     USAGE,
+    FakeBoard,
     FakeClient,
     FakeKiCad,
     FakeProject,
@@ -425,8 +428,8 @@ def test_cached_only_spends_nothing_and_says_why(tmp_path):
 # ── (e) Proposals, the preview, the write and the restore ────────────────────
 
 
-def project_state(tmp_path, **kwargs):
-    kicad = FakeKiCad(sample_classes())
+def project_state(tmp_path, version=FIXED_KICAD, **kwargs):
+    kicad = FakeKiCad(sample_classes(), version=version)
     project = FakeProject(kicad)
     classes = [NetClassValues.from_kipy(nc) for nc in project.get_net_classes()]
     return state_for(tmp_path, classes=classes, project=project, **kwargs), kicad
@@ -510,9 +513,82 @@ def test_the_write_is_unavailable_with_its_reason(tmp_path):
     state = state_for(tmp_path, project=None)
     state.set_form("HighSpeed", selected=True, impedance_target="50")
     state.run()
+    assert state.write_mode()[0] is None
     preview, reason = state.preview()
     assert preview is None and "No KiCad project" in reason
     assert state.restore_preview() == (None, reason)
+
+
+def test_on_kicad_10_0_6_the_values_are_listed_for_board_setup_and_not_written(tmp_path):
+    state, kicad = project_state(tmp_path, version=BROKEN_KICAD)
+    state.set_form("HighSpeed", selected=True, impedance_target="50")
+    state.run()
+    mode, reason = state.write_mode()
+    assert mode == D.MANUAL
+    assert reason.startswith("This is KiCad 10.0.6. KiCad 10.0.6 and earlier corrupt")
+    assert "Enter the values in Board Setup › Net Classes instead" in reason
+    assert state.write_availability() == (None, reason)
+
+    preview, why = state.preview()
+    assert why is None and preview.manual == reason
+    # Every field of the class, current → proposed, as Board Setup shows them.
+    [high] = preview.classes
+    assert high.rows(N.BOARD_SETUP_COLUMNS) == [
+        ("Track Width", "0.2 mm", "0.284 mm", True),
+        ("DP Width", "0.13 mm", "unchanged", False),
+        ("DP Gap", "0.25 mm", "unchanged", False),
+    ]
+    assert "HighSpeed\tTrack Width\t0.2 mm\t0.284 mm" in preview.manual_text()
+
+    confirmed = []
+    result = state.apply(preview, lambda p: confirmed.append(p) or True)
+    assert not result.applied and result.message == reason
+    assert confirmed == [] and kicad.sent == []
+    restore, why = state.restore_preview()
+    assert restore is None and "no write" in why
+
+
+def test_a_kicad_version_that_cannot_be_read_is_entered_by_hand(tmp_path):
+    state, kicad = project_state(tmp_path, version=None)
+    state.set_form("HighSpeed", selected=True, impedance_target="50")
+    state.run()
+    mode, reason = state.write_mode()
+    assert mode == D.MANUAL and reason.startswith("KiCad's version could not be read")
+    preview, _ = state.preview()
+    assert preview.manual == reason
+    assert not state.apply(preview, lambda p: True).applied and kicad.sent == []
+
+
+def test_the_history_is_shown_for_entering_by_hand_on_10_0_6(tmp_path):
+    state, kicad = project_state(tmp_path)
+    state.set_form("HighSpeed", selected=True, impedance_target="50")
+    state.run()
+    assert state.write_mode() == (D.WRITE, None)
+    assert state.apply(state.preview()[0], lambda p: True).applied
+    sent = len(kicad.sent)
+
+    # The same project and history, with KiCad reporting 10.0.6.
+    services = FakeServices(tmp_path, project=state.services.project,
+                            kicad=FakeKiCad([], version=BROKEN_KICAD))
+    later = D.DialogState(state.model, state.netclasses, services)
+    preview, why = later.restore_preview()
+    assert why is None and preview.action == N.ACTION_RESTORE and preview.manual
+    assert preview.manual_text().startswith("Previous net-class values recorded by the "
+                                            "rftools.io plugin")
+    assert "HighSpeed\tTrack Width\t0.284 mm\t0.2 mm" in preview.manual_text()
+    assert not later.apply(preview, lambda p: True).applied
+    assert len(kicad.sent) == sent
+
+
+def test_the_kicad_version_is_read_once(tmp_path):
+    state, kicad = project_state(tmp_path)
+    calls = []
+    real = kicad.get_version
+    kicad.get_version = lambda: calls.append(1) or real()
+    for _ in range(3):
+        state.write_mode()
+        state.write_availability()
+    assert state.kicad_version() == FIXED_KICAD and calls == [1]
 
 
 # ── The real Services object ─────────────────────────────────────────────────
@@ -529,9 +605,10 @@ def test_the_state_works_with_mains_services(tmp_path, monkeypatch):
     monkeypatch.setattr(A, "make_client", lambda key: client)
     settings = Settings(api_key=KEY, key_source="settings", options={"grid": 0.01},
                         path=tmp_path / "settings.json")
-    project = FakeProject(FakeKiCad(sample_classes()))
+    kicad = FakeKiCad(sample_classes())
+    project = FakeProject(kicad)
     services = M.Services(settings, Options(), ResultCache(tmp_path / "r.json"),
-                          project=project)
+                          kicad=kicad, board=FakeBoard(kicad), project=project)
     state = D.DialogState(layer_model(two_layer()), CLASSES, services)
     assert state.grid_text == "0.01"
     state.set_form("HighSpeed", selected=True, impedance_target="50")
@@ -539,7 +616,9 @@ def test_the_state_works_with_mains_services(tmp_path, monkeypatch):
     assert "at most 2 API calls; 40 of 50 remain" in state.budget_line()
     summary = state.run()
     assert summary.requests == 2 and all(r.ok for r in summary.rows)
+    assert state.kicad_version() == FIXED_KICAD  # through Services.kicad.get_version()
     assert state.write_availability() == (N.METHOD_COMMAND, None)
+    assert state.write_mode() == (D.WRITE, None)
 
 
 def test_the_six_layer_board_computes_its_inner_layer_as_stripline(tmp_path):

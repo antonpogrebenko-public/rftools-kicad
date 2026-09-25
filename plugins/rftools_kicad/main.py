@@ -1,8 +1,9 @@
 """The entrypoint KiCad runs for the plugin's action (plugin.json: rftools_kicad/main.py).
 
 KiCad starts this file with the plugin environment's Python, made from the
-interpreter set in Preferences › Plugins. The plugin needs Python 3.12 or
-later, and KiCad 10's own interpreter on macOS is 3.9, so this file must parse
+interpreter set in Preferences › Plugins (``api.interpreter_path`` in
+``kicad_common.json``). The plugin needs Python 3.12 or later, and KiCad 10's
+own interpreter is 3.9 on macOS and 3.11.5 on Windows, so this file must parse
 and start on Python 3.9: it checks the version before importing anything else
 and, when the interpreter is too old, says so and how to fix it (a wx dialog
 when wx imports; otherwise the console, which KiCad 10.0.1+ shows in its
@@ -25,6 +26,14 @@ from typing import Any, Callable, List, Optional
 
 REQUIRED_PYTHON = (3, 12)
 TITLE = "rftools.io board calculations"
+#: plugin.json's identifier, which names the plugin's environment folder.
+PLUGIN_ID = "io.rftools.kicad"
+#: How a user makes KiCad rebuild the plugin's environment (as api.RECREATE_ENVIRONMENT,
+#: repeated here because this file imports nothing of the plugin's before the check).
+RECREATE_ENVIRONMENT = (
+    "right-click the plugin in Preferences › Plugins › Action Plugins and choose "
+    "Recreate Plugin Environment"
+)
 
 API_NOT_ENABLED = (
     "Could not connect to KiCad. Enable the KiCad API in Preferences › Plugins "
@@ -55,12 +64,15 @@ def python_too_old_message(
     return (
         "The rftools.io plugin needs Python 3.12 or later. KiCad is running it with "
         "Python {found} ({where}).\n\n"
-        "Install Python 3.12 or later. On Linux, KiCad uses the system python3: install "
-        "your distribution's python3.12 (or newer) package.\n\n"
-        "Then open Preferences › Plugins in KiCad, set Python Interpreter to the new "
-        "Python, and restart KiCad. KiCad rebuilds the plugin's environment when the "
-        "interpreter changes."
-    ).format(found=found, where=where)
+        "Install Python 3.12 or later. KiCad's own Python is too old on macOS (3.9) and "
+        "Windows (3.11): install one from python.org. On Linux, KiCad uses the system "
+        "python3, which must be 3.12 or newer, with your distribution's python3-venv and "
+        "python3-wxgtk4.0 packages.\n\n"
+        "Then open Preferences › Plugins in KiCad and set Python Interpreter to the new "
+        "Python. KiCad 10.0.6 does not rebuild the plugin's environment on its own: "
+        "{recreate}, or delete the plugin's environment folder ({env} under KiCad's "
+        "python-environments cache), then restart KiCad."
+    ).format(found=found, where=where, recreate=RECREATE_ENVIRONMENT, env=PLUGIN_ID)
 
 
 def notify(
@@ -152,8 +164,7 @@ def connect(factory: Optional[Callable[[], Any]] = None) -> Any:
     except Exception as exc:
         raise PluginStartError(
             "The kicad-python library could not be loaded ({}: {}). To reinstall it, "
-            "right-click the plugin's action in the PCB Editor's preferences and choose "
-            "Recreate Plugin Environment.".format(type(exc).__name__, exc)
+            "{}.".format(type(exc).__name__, exc, RECREATE_ENVIRONMENT)
         ) from exc
     try:
         kicad = (factory or kipy.KiCad)()

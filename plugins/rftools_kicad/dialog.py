@@ -13,6 +13,10 @@ report is used too.
 
 Layout: three tabs — 1 Layer model, 2 Net classes, 3 Results — above the key,
 the run budget and the buttons (Run, Apply to net classes…, Restore…, Close).
+On a KiCad that cannot take a net-class write (10.0.6 and earlier), the write
+buttons become "Values for Board Setup…" and "Previous values…": they show
+the same preview with Board Setup's column names, the reason, and Copy values
+(the clipboard) instead of a write.
 """
 from __future__ import annotations
 
@@ -21,9 +25,16 @@ from typing import Any
 import wx
 import wx.lib.scrolledpanel as scrolled
 
-from rftools_kicad.dialog_logic import COLUMNS, OK, DialogState
+from rftools_kicad import netclasses as N
+from rftools_kicad.dialog_logic import COLUMNS, MANUAL, OK, DialogState
 
 TITLE = "rftools.io board calculations"
+
+APPLY_LABEL = "Apply to net classes…"
+RESTORE_LABEL = "Restore previous values…"
+MANUAL_APPLY_LABEL = "Values for Board Setup…"
+MANUAL_RESTORE_LABEL = "Previous values…"
+COPY_LABEL = "Copy values"
 
 #: Result columns' widths, in DIPs: COLUMNS then the note.
 COLUMN_WIDTHS = (110, 70, 190, 110, 150, 90, 220, 170, 130, 60, 320)
@@ -334,17 +345,21 @@ class MainDialog(wx.Dialog):
         budget.Add(check)
         sizer.Add(budget, 0, wx.EXPAND | wx.BOTTOM, gap)
 
+        self.write_note = wx.StaticText(panel, label="")
+        self.write_note.SetForegroundColour(WARN)
+        sizer.Add(self.write_note, 0, wx.EXPAND | wx.BOTTOM, gap)
+
         buttons = wx.BoxSizer(wx.HORIZONTAL)
         self.run_button = wx.Button(panel, label="Run")
         self.run_button.Bind(wx.EVT_BUTTON, self.on_run)
-        self.apply_button = wx.Button(panel, label="Apply to net classes…")
+        self.apply_button = wx.Button(panel, label=APPLY_LABEL)
         self.apply_button.Bind(wx.EVT_BUTTON, self.on_apply)
-        restore = wx.Button(panel, label="Restore previous values…")
-        restore.Bind(wx.EVT_BUTTON, self.on_restore)
+        self.restore_button = wx.Button(panel, label=RESTORE_LABEL)
+        self.restore_button.Bind(wx.EVT_BUTTON, self.on_restore)
         close = wx.Button(panel, id=wx.ID_CLOSE, label="Close")
         close.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(wx.ID_CLOSE))
         self.SetEscapeId(wx.ID_CLOSE)
-        for button in (self.run_button, self.apply_button, restore):
+        for button in (self.run_button, self.apply_button, self.restore_button):
             buttons.Add(button, 0, wx.RIGHT, gap)
         buttons.AddStretchSpacer()
         buttons.Add(close)
@@ -358,10 +373,17 @@ class MainDialog(wx.Dialog):
         self.budget_text.SetLabel(state.budget_line())
         if hasattr(self, "form_errors"):
             self.form_errors.SetLabel("\n".join(state.errors()))
-        method, reason = state.write_availability()
-        can_apply = bool(state.results) and not state.results_stale and method is not None
+        mode, reason = state.write_mode()
+        manual = mode == MANUAL
+        self.apply_button.SetLabel(MANUAL_APPLY_LABEL if manual else APPLY_LABEL)
+        self.restore_button.SetLabel(MANUAL_RESTORE_LABEL if manual else RESTORE_LABEL)
+        can_apply = bool(state.results) and not state.results_stale and mode is not None
         self.apply_button.Enable(can_apply)
         self.apply_button.SetToolTip(reason or "Preview the widths and gaps, then confirm.")
+        note = reason if manual else ""
+        if self.write_note.GetLabel() != note:
+            self.write_note.SetLabel(note)
+            self.write_note.Wrap(self.FromDIP(1100))
         self.Layout()
 
     def on_check_allowance(self, event: Any) -> None:
@@ -406,24 +428,30 @@ class MainDialog(wx.Dialog):
             wx.MessageBox(summary.message, TITLE, wx.OK | wx.ICON_ERROR, self)
 
     def on_apply(self, event: Any) -> None:
-        preview, reason = self.state.preview()
-        if preview is None:
-            wx.MessageBox(reason, TITLE, wx.OK | wx.ICON_INFORMATION, self)
-            return
-        self._write(preview)
+        self._preview(*self.state.preview())
 
     def on_restore(self, event: Any) -> None:
-        preview, reason = self.state.restore_preview()
+        self._preview(*self.state.restore_preview())
+
+    def _preview(self, preview: Any, reason: str | None) -> None:
         if preview is None:
             wx.MessageBox(reason, TITLE, wx.OK | wx.ICON_INFORMATION, self)
-            return
-        self._write(preview)
+        elif preview.manual:  # this KiCad cannot take the write: the values, to enter by hand
+            with PreviewDialog(self, preview) as dialog:
+                dialog.ShowModal()
+        else:
+            self._write(preview)
 
     def _write(self, preview: Any) -> None:
         result = self.state.apply(preview, self._confirm)
         if result.cancelled:
             return
-        icon = wx.ICON_INFORMATION if result.applied else wx.ICON_WARNING
+        if result.applied:
+            icon = wx.ICON_INFORMATION
+        elif result.status == N.STATUS_DAMAGED:
+            icon = wx.ICON_ERROR
+        else:
+            icon = wx.ICON_WARNING
         wx.MessageBox(result.message, TITLE, wx.OK | icon, self)
         self._build_classes()  # the classes' current values, as KiCad now reports them
         self._refresh()
@@ -434,30 +462,49 @@ class MainDialog(wx.Dialog):
 
 
 class PreviewDialog(wx.Dialog):
-    """Every field of each class, current → proposed; OK writes, Cancel sends nothing."""
+    """Every field of each class, current → proposed.
+
+    For a write, OK writes and Cancel sends nothing. For a preview marked
+    ``manual`` (a KiCad that cannot take the write), the fields carry Board
+    Setup's column names under the reason, and the buttons are Copy values and
+    Close: nothing can be written from it.
+    """
 
     def __init__(self, parent: Any, preview: Any) -> None:
-        restore = preview.action == "restore"
-        super().__init__(parent, title="Restore net classes" if restore else "Apply to net classes",
-                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        restore = preview.action == N.ACTION_RESTORE
+        self.preview = preview
+        manual = bool(preview.manual)
+        if manual:
+            title = "Previous net-class values" if restore else "Net-class values for Board Setup"
+        else:
+            title = "Restore net classes" if restore else "Apply to net classes"
+        super().__init__(parent, title=title, style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         gap = self.FromDIP(8)
         sizer = wx.BoxSizer(wx.VERTICAL)
-        intro = wx.StaticText(self, label=(
-            "Only the values marked below change: track width, differential-pair width and "
-            "differential-pair gap. Every other setting of every class stays as it is. The "
-            "previous values are recorded, so Restore can write them back."
-        ))
+        if manual:
+            text = (
+                f"{preview.manual} Keep this window open while you enter them, or copy them."
+            )
+        else:
+            text = (
+                "Only the values marked below change: track width, differential-pair width "
+                "and differential-pair gap. Every other setting of every class stays as it is. "
+                "The previous values are recorded, so Restore can write them back."
+            )
+        intro = wx.StaticText(self, label=text)
         intro.Wrap(self.FromDIP(640))
         sizer.Add(intro, 0, wx.ALL, gap)
         table = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_HRULES,
                             size=self.FromDIP(wx.Size(660, 220)))
-        for index, (head, width) in enumerate(
-            (("Net class", 150), ("Field", 150), ("Current", 150),
-             ("Restored to" if restore else "Proposed", 150))
-        ):
-            table.InsertColumn(index, head, width=self.FromDIP(width))
+        if manual:
+            heads = ("Net class", "Board Setup column", "Current", "Enter")
+        else:
+            heads = ("Net class", "Field", "Current", "Restored to" if restore else "Proposed")
+        for index, head in enumerate(heads):
+            table.InsertColumn(index, head, width=self.FromDIP(150))
+        labels = N.BOARD_SETUP_COLUMNS if manual else N.FIELD_LABELS
         for netclass in preview.classes:
-            for label, current, proposed, changes in netclass.rows():
+            for label, current, proposed, changes in netclass.rows(labels):
                 row = table.InsertItem(table.GetItemCount(), netclass.netclass)
                 table.SetItem(row, 1, label)
                 table.SetItem(row, 2, current)
@@ -469,14 +516,45 @@ class PreviewDialog(wx.Dialog):
             notes = wx.StaticText(self, label="\n".join(preview.notes))
             notes.Wrap(self.FromDIP(640))
             sizer.Add(notes, 0, wx.ALL, gap)
-        buttons = wx.StdDialogButtonSizer()
-        ok = wx.Button(self, wx.ID_OK, label="Restore" if restore else "Write to net classes")
-        buttons.AddButton(ok)
-        buttons.AddButton(wx.Button(self, wx.ID_CANCEL))
-        buttons.Realize()
+        if manual:
+            buttons = wx.BoxSizer(wx.HORIZONTAL)
+            copy = wx.Button(self, label=COPY_LABEL)
+            copy.Bind(wx.EVT_BUTTON, self.on_copy)
+            buttons.Add(copy, 0, wx.RIGHT, gap)
+            self.copied = wx.StaticText(self, label="")
+            buttons.Add(self.copied, 0, wx.ALIGN_CENTER_VERTICAL)
+            buttons.AddStretchSpacer()
+            close = wx.Button(self, wx.ID_CLOSE, label="Close")
+            close.Bind(wx.EVT_BUTTON, lambda e: self.EndModal(wx.ID_CLOSE))
+            self.SetEscapeId(wx.ID_CLOSE)
+            buttons.Add(close)
+        else:
+            buttons = wx.StdDialogButtonSizer()
+            ok = wx.Button(self, wx.ID_OK, label="Restore" if restore else "Write to net classes")
+            buttons.AddButton(ok)
+            buttons.AddButton(wx.Button(self, wx.ID_CANCEL))
+            buttons.Realize()
         sizer.Add(buttons, 0, wx.EXPAND | wx.ALL, gap)
         self.SetSizerAndFit(sizer)
         self.CentreOnParent()
+
+    def on_copy(self, event: Any) -> None:
+        copied = copy_text(self.preview.manual_text())
+        self.copied.SetLabel("Copied." if copied else "The clipboard could not be opened.")
+        self.Layout()
+
+
+def copy_text(text: str) -> bool:
+    """Put *text* on the clipboard; False when the clipboard cannot be opened."""
+    clipboard = wx.TheClipboard
+    if not clipboard.Open():
+        return False
+    try:
+        clipboard.SetData(wx.TextDataObject(text))
+    finally:
+        clipboard.Close()
+    clipboard.Flush()  # keep it after the plugin exits, where the platform can
+    return True
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

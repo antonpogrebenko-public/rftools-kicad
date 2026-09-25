@@ -8,16 +8,26 @@ A KiCad 10 plugin that reads the open board's stackup and net classes and works 
 - the IPC-2152 track width for a current;
 - via impedance, capacitance, inductance and current capacity.
 
-Each number is the one the rftools.io web calculators give for the same inputs. Each is shown with its formula reference, whether its inputs are inside the calculator's valid range, and the engine version that computed it. If you ask, the plugin writes the suggested widths and gaps into your net classes. It shows you every change first, and each write can be undone.
+Each number is the one the rftools.io web calculators give for the same inputs. Each is shown with its formula reference, whether its inputs are inside the calculator's valid range, and the engine version that computed it. If you ask, the plugin writes the suggested widths and gaps into your net classes. It shows you every change first, and each write can be undone. On KiCad 10.0.6 and earlier it lists the values for you to enter by hand instead (see [Writing widths to net classes](#writing-widths-to-net-classes)).
 
 ## Requirements
 
 - **KiCad 10.0 or later.** The plugin uses KiCad's IPC API, not the older SWIG plugin interface.
 - **The KiCad API switched on.** In KiCad, open Preferences › Plugins and tick **Enable KiCad API**.
-- **Python 3.12 or later as KiCad's plugin interpreter.** Set it in Preferences › Plugins › **Python Interpreter**, then restart KiCad. KiCad rebuilds the plugin's environment when the interpreter changes.
+- **Python 3.12 or later as KiCad's plugin interpreter.** Set it in Preferences › Plugins › **Python Interpreter**. KiCad keeps this setting as `api.interpreter_path` in `kicad_common.json`.
   - **macOS:** KiCad bundles Python 3.9, which is too old. Install Python 3.12 or later from [python.org](https://www.python.org/downloads/macos/) or with Homebrew (`brew install python@3.12`). Then select it, for example `/Library/Frameworks/Python.framework/Versions/3.12/bin/python3` or `/opt/homebrew/bin/python3.12`.
-  - **Linux:** KiCad uses the system `python3`, which must be 3.12 or later. The dialog also needs your distribution's wxPython package (`python3-wxgtk4.0` on Debian and Ubuntu). Without it the plugin opens a read-only report in your browser instead (see [Without the dialog](#without-the-dialog)).
-  - **Windows:** install Python 3.12 or later from [python.org](https://www.python.org/downloads/windows/) and select its `python.exe`.
+  - **Windows:** KiCad bundles Python 3.11.5, which is also too old. Install Python 3.12 or later from [python.org](https://www.python.org/downloads/windows/) and select its `pythonw.exe`, for example `C:\Users\<you>\AppData\Local\Programs\Python\Python312\pythonw.exe`.
+  - **Linux:** KiCad uses the system `python3`, which must be 3.12 or later. It also needs your distribution's `python3-venv` and `python3-wxgtk4.0` packages (Debian and Ubuntu names):
+    - Without `python3-venv`, KiCad builds the plugin's environment with no pip, so the plugin's libraries never install and the plugin never loads. Install `python3-venv`, delete the plugin's environment folder (see below), and restart KiCad.
+    - Without `python3-wxgtk4.0`, the plugin opens a read-only report in your browser instead of its dialog (see [Without the dialog](#without-the-dialog)).
+    - Any Python other than the system `python3` has no wxPython on Linux: the distribution's package is built for the system Python only, and PyPI has no Linux wxPython wheel. With such an interpreter, the plugin shows the browser report.
+- **After changing the interpreter, rebuild the plugin's environment.** KiCad 10.0.6 does not rebuild it on its own. Right-click the plugin in Preferences › Plugins › Action Plugins and choose **Recreate Plugin Environment**, or delete the environment folder, then restart KiCad. The folder is:
+
+  | System | Plugin environment |
+  |---|---|
+  | macOS | `~/Library/Caches/KiCad/10.0/python-environments/io.rftools.kicad` |
+  | Linux | `~/.cache/kicad/10.0/python-environments/io.rftools.kicad` |
+  | Windows | `%LOCALAPPDATA%\KiCad\10.0\python-environments\io.rftools.kicad` |
 
 If the interpreter is too old, the plugin computes nothing. It says which Python it found and how to change it.
 
@@ -113,7 +123,9 @@ Nothing in the board or the project changes unless you ask:
 
 1. After a run, click **Apply to net classes…**. The preview lists, for each selected class, the current and proposed track width, differential-pair width and differential-pair gap.
 2. Only those three fields can change, and only where a value differs. Click **Write to net classes** to confirm, or Cancel to change nothing.
-3. Before writing, the plugin records the previous values. It then reads the classes back. If KiCad did not apply the change exactly, the plugin says the write was not applied.
+3. Before writing, the plugin records the previous values and counts the nets in each class it will write. It then reads the classes and the nets back:
+   - If KiCad applied nothing, or put other values in the three fields, the plugin says the write was not applied.
+   - If a written class no longer lists itself as its only constituent, holds a different number of nets, or changed in any other setting, or if another class changed, the plugin says: **"The write did not apply correctly. Do not save the board; close it without saving and reopen it."**
 
 The width proposed for a class is the width for its single-ended target on its routing layer. Without a target, it is the IPC-2152 width for its current, rounded up to the grid, but only if the class is narrower than that. The gap proposed is the gap for its differential target, at the class's current pair width.
 
@@ -121,9 +133,22 @@ The width proposed for a class is the width for its single-ended target on its r
 
 KiCad applies the change to the open project's settings in memory. It reaches the project file (`.kicad_pro`) when KiCad next saves the project, so save the board before closing KiCad.
 
+### KiCad 10.0.6 and earlier: enter the values by hand
+
+KiCad 10.0.6 and earlier corrupt a net class written through the API. The class loses its nets: none of its nets belong to it any more. Writing the old values back does not repair it, and the next save hangs KiCad on Linux or crashes it on Windows. KiCad fixed this on 22 September 2026 (commit `d622c37a`, "API: Fix handling of netclasses"), but no KiCad release had the fix yet as of 25 September 2026. The first one will be a later 10.0.x or 11.x release.
+
+So the plugin writes net classes only on a KiCad later than 10.0.6. On 10.0.6 and earlier, or when it cannot read KiCad's version, it writes nothing:
+
+1. The buttons read **Values for Board Setup…** and **Previous values…**, and the dialog says why.
+2. **Values for Board Setup…** shows the same preview as a write: every selected class's track width, DP width and DP gap, current and proposed, in mm, under Board Setup's column names.
+3. **Copy values** puts that table on the clipboard as tab-separated text. Keep the window open, or paste the table somewhere, while you enter the values in Board Setup › Net Classes.
+4. **Previous values…** shows the values recorded before the plugin's latest write, if there is one, for entering the same way. The history is still read, but nothing is written back.
+
+Writing from the plugin turns on by itself once you run it on a KiCad release with the fix.
+
 ## Without the dialog
 
-If wxPython cannot be loaded, the plugin opens a report in your browser instead. This happens, for example, on Linux without `python3-wxgtk4.0`. The report shows:
+If wxPython cannot be loaded, the plugin opens a report in your browser instead. This happens on Linux without `python3-wxgtk4.0`, and on Linux with any interpreter other than the system `python3`. The report shows:
 
 - the layer model;
 - the calculations planned;
@@ -134,9 +159,13 @@ It spends calls only if the run fits your remaining allowance. Otherwise it show
 
 ## Troubleshooting
 
-- **"needs Python 3.12 or later"**: set KiCad's plugin interpreter as described under [Requirements](#requirements), then restart KiCad.
+- **"needs Python 3.12 or later"**: set KiCad's plugin interpreter as described under [Requirements](#requirements). Then rebuild the plugin's environment and restart KiCad.
+- **The plugin still runs on the old Python after you changed the interpreter**: KiCad 10.0.6 keeps the old environment. Right-click the plugin in Preferences › Plugins › Action Plugins and choose **Recreate Plugin Environment**, or delete the environment folder listed under [Requirements](#requirements). Then restart KiCad.
+- **On Linux, the plugin never appears or never starts**: check that `python3-venv` is installed. Then delete the environment folder and restart KiCad.
 - **"Could not connect to KiCad"**: tick Enable KiCad API in Preferences › Plugins, then run the action again from the PCB editor.
-- **A library could not be loaded**: right-click the plugin's action in the PCB editor's plugin preferences and choose **Recreate Plugin Environment**.
+- **On Windows without a GPU, the plugin waits or cannot connect** (a remote desktop session or a virtual machine): KiCad may be showing a modal "Could not use OpenGL" notice, possibly behind another window. KiCad's API does not answer until you close that notice.
+- **A library could not be loaded**: right-click the plugin in Preferences › Plugins › Action Plugins and choose **Recreate Plugin Environment**.
+- **"The write did not apply correctly. Do not save the board"**: close the board without saving, reopen it, and check Board Setup › Net Classes. The write is recorded in `history.json` as `damaged`.
 
 ## Privacy
 

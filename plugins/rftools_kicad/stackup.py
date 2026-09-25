@@ -445,6 +445,10 @@ def from_kipy(board_stackup: Any) -> dict[str, Any]:
     message. Silkscreen and solder paste entries are dropped. Thicknesses are in
     nanometres, as KiCad reports them; a value KiCad leaves unset (0) is written
     as ``None`` so the model names it as missing rather than computing with it.
+
+    Only the fields named here are read. A layer's ``color`` never is, nor
+    passed on: KiCad 10.0.6 on Windows sends dielectric layers' colour
+    uninitialised (denormal doubles such as 3.5e-323; spike, 2026-09-25).
     """
     from kipy.board import BoardStackup
     from kipy.proto.board import board_pb2

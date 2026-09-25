@@ -222,6 +222,39 @@ def test_copper_layers_the_user_named_alike_are_told_apart():
     assert names == ["F.Cu", "GND (In1.Cu)", "GND (In2.Cu)", "B.Cu"]
 
 
+def test_a_layers_garbage_colour_is_never_read_or_passed_on(monkeypatch):
+    # KiCad 10.0.6 on Windows sends dielectric layers' colour uninitialised
+    # (denormal doubles, 3.5e-323 in the spike); the colour means nothing to a
+    # calculation, so it must not reach the neutral stackup or the model.
+    from kipy.board import BoardStackupLayer
+
+    clean = kipy_stackup(six_layer())
+    garbage = kipy_stackup(six_layer())
+    for layer in garbage.layers:
+        layer.color.r = 3.5e-323
+        layer.color.g = float("nan")
+        layer.color.b = float("inf")
+        layer.color.a = -1e308
+    assert any(layer.HasField("color") for layer in garbage.layers)
+
+    def refuse(self):
+        raise AssertionError("from_kipy read a stackup layer's colour")
+
+    monkeypatch.setattr(BoardStackupLayer, "color", property(refuse))
+    neutral = from_kipy(garbage)
+    assert neutral == from_kipy(clean)
+
+    def keys(value):
+        if isinstance(value, dict):
+            return set(value) | {k for v in value.values() for k in keys(v)}
+        if isinstance(value, list):
+            return {k for v in value for k in keys(v)}
+        return set()
+
+    assert not any("colo" in key.lower() for key in keys(neutral))
+    assert layer_model(neutral).structures == layer_model(from_kipy(clean)).structures
+
+
 def test_kicad_layer_names():
     from kipy.proto.board.board_types_pb2 import BoardLayer
 

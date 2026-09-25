@@ -18,6 +18,8 @@ from rftools_kicad.dialog_logic import DialogState  # noqa: E402
 from rftools_kicad.mapping import NetClassValues  # noqa: E402
 from rftools_kicad.stackup import layer_model  # noqa: E402
 from tests.support import (  # noqa: E402
+    BROKEN_KICAD,
+    FIXED_KICAD,
     FakeClient,
     FakeKiCad,
     FakeProject,
@@ -37,14 +39,25 @@ def app():
     yield application
 
 
-@pytest.fixture
-def dialog(app, tmp_path):
-    project = FakeProject(FakeKiCad(sample_classes()))
+def make_dialog(tmp_path, version=FIXED_KICAD):
+    project = FakeProject(FakeKiCad(sample_classes(), version=version))
     classes = [NetClassValues.from_kipy(nc) for nc in project.get_net_classes()]
     services = FakeServices(tmp_path, client=FakeClient(calculate=answer, solve=solver()),
                             project=project)
     state = DialogState(layer_model(four_layer(roles=False)), classes, services)
-    window = DLG.MainDialog(None, state)
+    return DLG.MainDialog(None, state)
+
+
+@pytest.fixture
+def dialog(app, tmp_path):
+    window = make_dialog(tmp_path)
+    yield window
+    window.Destroy()
+
+
+@pytest.fixture
+def old_kicad_dialog(app, tmp_path):
+    window = make_dialog(tmp_path, version=BROKEN_KICAD)
     yield window
     window.Destroy()
 
@@ -104,6 +117,46 @@ def test_the_preview_lists_three_fields_per_class(dialog):
         ]
         buttons = [b.GetLabel() for b in controls(window, wx.Button)]
         assert "Write to net classes" in buttons
+
+
+def test_the_write_buttons_say_what_they_do(dialog):
+    assert dialog.apply_button.GetLabel() == DLG.APPLY_LABEL
+    assert dialog.restore_button.GetLabel() == DLG.RESTORE_LABEL
+    assert dialog.write_note.GetLabel() == ""
+
+
+def test_on_kicad_10_0_6_the_values_are_offered_for_board_setup(old_kicad_dialog, monkeypatch):
+    dialog = old_kicad_dialog
+    state = dialog.state
+    state.set_form("HighSpeed", selected=True, impedance_target="50")
+    state.run()
+    dialog._fill_results()
+    dialog._refresh()
+    assert dialog.apply_button.GetLabel() == DLG.MANUAL_APPLY_LABEL
+    assert dialog.apply_button.IsEnabled()
+    assert dialog.restore_button.GetLabel() == DLG.MANUAL_RESTORE_LABEL
+    assert "KiCad 10.0.6 and earlier corrupt" in dialog.write_note.GetLabel()
+
+    preview, reason = state.preview()
+    assert reason is None and preview.manual
+    copied = []
+    monkeypatch.setattr(DLG, "copy_text", lambda text: copied.append(text) or True)
+    with DLG.PreviewDialog(dialog, preview) as window:
+        buttons = [b.GetLabel() for b in controls(window, wx.Button)]
+        assert DLG.COPY_LABEL in buttons and "Close" in buttons
+        assert "Write to net classes" not in buttons
+        [table] = controls(window, wx.ListCtrl)
+        assert table.GetColumn(1).GetText() == "Board Setup column"
+        assert [table.GetItemText(i, 1) for i in range(3)] == ["Track Width", "DP Width",
+                                                               "DP Gap"]
+        assert [table.GetItemText(i, 3) for i in range(3)] == [
+            "0.284 mm", "unchanged", "unchanged",
+        ]
+        assert any("KiCad 10.0.6 and earlier corrupt" in text for text in labels(window))
+        window.on_copy(None)
+        assert copied == [preview.manual_text()]
+        assert window.copied.GetLabel() == "Copied."
+    assert state.services.project._kicad.sent == []
 
 
 def test_without_a_display_present_falls_back_to_the_report(monkeypatch, tmp_path):

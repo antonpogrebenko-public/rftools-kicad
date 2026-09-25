@@ -37,10 +37,11 @@ FULL_DIALOG = (
     "could not load, so the page shows the impedance of every net class's track width "
     "on every signal layer and nothing else. Targets, currents, vias and writing "
     "widths to net classes are in the dialog. To get it: on Linux, install your "
-    "distribution's wxPython package for the Python KiCad uses (python3-wxgtk4.0 on "
-    "Debian and Ubuntu); on macOS and Windows, right-click the plugin's action in the "
-    "PCB Editor's preferences and choose Recreate Plugin Environment, which installs "
-    "wxPython with the plugin."
+    "distribution's wxPython package for the system python3 (python3-wxgtk4.0 on "
+    "Debian and Ubuntu) and use that python3 as KiCad's plugin interpreter, since no "
+    "other Python there has wx; on macOS and Windows, right-click the plugin in "
+    "Preferences › Plugins › Action Plugins and choose Recreate Plugin Environment, "
+    "which installs wxPython with the plugin."
 )
 
 _STYLE = """

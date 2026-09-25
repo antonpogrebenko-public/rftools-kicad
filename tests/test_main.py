@@ -48,10 +48,26 @@ def test_the_message_for_an_old_python_says_what_to_do():
     assert "needs Python 3.12 or later" in message
     assert "Python 3.9.13 (/KiCad/python3.9)" in message
     assert "Preferences › Plugins" in message and "Python Interpreter" in message
-    assert "restart KiCad" in message and "rebuilds the plugin's environment" in message
-    assert "On Linux, KiCad uses the system python3" in message and "python3.12" in message
+    assert "restart KiCad" in message
+    # KiCad 10.0.6 keeps the old environment after the interpreter changes (spike).
+    assert "does not rebuild the plugin's environment on its own" in message
+    assert ("right-click the plugin in Preferences › Plugins › Action Plugins and choose "
+            "Recreate Plugin Environment") in message
+    assert "io.rftools.kicad" in message and "python-environments" in message
+    assert "macOS (3.9) and Windows (3.11)" in message and "python.org" in message
+    assert "On Linux, KiCad uses the system python3" in message
+    assert "python3-venv" in message and "python3-wxgtk4.0" in message
     assert M.python_too_old_message((3, 12, 0)) is None
     assert M.python_too_old_message((3, 13, 5)) is None
+
+
+def test_mains_copies_of_shared_wording_match_the_package():
+    # main.py repeats these because it imports nothing of the plugin's before the check.
+    import rftools_kicad
+    from rftools_kicad import api as A
+
+    assert M.PLUGIN_ID == rftools_kicad.IDENTIFIER
+    assert M.RECREATE_ENVIRONMENT == A.RECREATE_ENVIRONMENT
 
 
 def test_an_old_python_is_told_before_anything_is_imported(monkeypatch):
