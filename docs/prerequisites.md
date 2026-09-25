@@ -15,6 +15,16 @@ The plugin depends on rftools.io's metered API (openspec change `api-metering` i
 
 Afterwards the key was deleted from the machine that ran these checks, and the account owner was asked to revoke it.
 
-## Target solve (task 2A.4)
+## Target solve (task 2A.4), checked 2026-09-25
 
-Not yet live. `POST /api/py/v1/calculate/solve` and `rftools-io` 0.4.0 (`Client.solve`) are built. They ship after the frontend's `/docs/api` section, and the result will be recorded here.
+The frontend's `/docs/api` section, changelog entry and `/docs/python` went live first. The backend `0c02e01` followed. A free key was issued through the device grant (`client_id` `release-check`).
+
+- **Without a key,** `POST /api/py/v1/calculate/solve` answers 401 with the key link.
+- **G1 from `golden/kicad-golden.json`:** `microstrip-impedance`, solving `traceWidth` for `impedance` 50 on a 0.001 mm grid, with `substrateHeight` 1.51, `dielectricConstant` 4.5 and `copperThickness` 35.
+  - **Result:** 200 with `value` 2.784 (the golden grid width), `unrounded` 2.784010722886359, `reached` true and `evaluations` 68.
+  - **Forward result:** impedance 50.0001127254694, equal to the golden web output.
+  - **Provenance:** nine members, `version` `api@0c02e01f0c4d`, `validRange` `inside`, `inputs.traceWidth` 2.784.
+  - **Usage headers:** `X-Usage-Used` rose from 1 to 2.
+- **A refusal** (`solveFor` set to the output `impedance`) answered 400 naming `solveFor`, and usage stayed at 2.
+
+Afterwards the key was deleted from the machine that ran the check, and the account owner was asked to revoke it.
