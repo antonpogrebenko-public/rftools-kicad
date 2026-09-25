@@ -62,5 +62,4 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip packaging
       - name: Wheels for macOS, Windows and Linux on CPython 3.12 and 3.13
-        # --relax-unpublished until rftools-io 0.4 is on PyPI; it warns when used.
-        run: python scripts/check_wheels.py --relax-unpublished
+        run: python scripts/check_wheels.py
