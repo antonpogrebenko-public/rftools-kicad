@@ -44,21 +44,21 @@ def test_main_imports_only_the_standard_library_at_module_level():
 
 
 def test_the_message_for_an_old_python_says_what_to_do():
-    message = M.python_too_old_message((3, 9, 13, "final", 0), "/KiCad/python3.9")
-    assert "needs Python 3.12 or later" in message
-    assert "Python 3.9.13 (/KiCad/python3.9)" in message
-    assert "Preferences › Plugins" in message and "Python Interpreter" in message
-    assert "restart KiCad" in message
+    message = M.python_too_old_message((3, 8, 10, "final", 0), "/usr/bin/python3.8")
+    assert "needs Python 3.9 or later" in message
+    assert "Python 3.8.10 (/usr/bin/python3.8)" in message
+    assert "runs on KiCad's own Python and needs nothing else installed" in message
+    assert "set Python Interpreter back to KiCad's own Python" in message
+    assert "(on Linux, the system python3)" in message
+    assert "Preferences › Plugins" in message and "restart KiCad" in message
     # KiCad 10.0.6 keeps the old environment after the interpreter changes (spike).
     assert "does not rebuild the plugin's environment on its own" in message
     assert ("right-click the plugin in Preferences › Plugins › Action Plugins and choose "
             "Recreate Plugin Environment") in message
     assert "io.rftools.kicad" in message and "python-environments" in message
-    assert "macOS (3.9) and Windows (3.11)" in message and "python.org" in message
-    assert "On Linux, KiCad uses the system python3" in message
-    assert "python3-venv" in message and "python3-wxgtk4.0" in message
-    assert M.python_too_old_message((3, 12, 0)) is None
-    assert M.python_too_old_message((3, 13, 5)) is None
+    assert "python.org" not in message and "Install Python" not in message
+    for supported in ((3, 9, 13), (3, 11, 5), (3, 12, 3), (3, 13, 5), (3, 14, 0)):
+        assert M.python_too_old_message(supported) is None, supported
 
 
 def test_mains_copies_of_shared_wording_match_the_package():
@@ -74,23 +74,29 @@ def test_an_old_python_is_told_before_anything_is_imported(monkeypatch):
     shown = []
     monkeypatch.setattr(M, "notify", lambda text, **kw: shown.append((text, kw)) or "wx")
     monkeypatch.setattr(M, "run", lambda *a, **k: pytest.fail("run() on an old Python"))
-    assert M.main(version_info=(3, 9, 13)) == 2
+    assert M.main(version_info=(3, 8, 10)) == 2
     [(text, kw)] = shown
-    assert "3.9.13" in text and kw == {"browser_fallback": True}
+    assert "3.8.10" in text and kw == {"browser_fallback": True}
+
+
+def test_kicads_own_python_runs_the_plugin(monkeypatch):
+    monkeypatch.setattr(M, "notify", lambda *a, **k: pytest.fail("told to change interpreter"))
+    monkeypatch.setattr(M, "run", lambda *a, **k: 0)
+    assert M.main(version_info=(3, 9, 13)) == 0  # macOS's bundled Python
 
 
 def test_without_wx_the_message_opens_as_a_page(monkeypatch, tmp_path, capsys):
     monkeypatch.setitem(sys.modules, "wx", None)  # import wx fails
     monkeypatch.setattr(M.tempfile, "gettempdir", lambda: str(tmp_path))
     opened = []
-    text = M.python_too_old_message((3, 9, 13), "/K/<py>")
+    text = M.python_too_old_message((3, 8, 10), "/K/<py>")
     how = M.notify(text, browser_fallback=True, opener=opened.append)
     assert how == "browser"
     [uri] = opened
     assert uri.startswith("file://") and uri.endswith(".html")
     page = next(tmp_path.glob("rftools-kicad-*.html")).read_text(encoding="utf-8")
-    assert "needs Python 3.12 or later" in page and "/K/&lt;py&gt;" in page
-    assert "needs Python 3.12 or later" in capsys.readouterr().err
+    assert "needs Python 3.9 or later" in page and "/K/&lt;py&gt;" in page
+    assert "needs Python 3.9 or later" in capsys.readouterr().err
 
 
 def test_a_stream_that_cannot_encode_the_text_gets_replacements():

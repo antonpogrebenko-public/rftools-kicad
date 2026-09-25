@@ -14,13 +14,11 @@ Each number is the one the rftools.io web calculators give for the same inputs. 
 
 - **KiCad 10.0 or later.** The plugin uses KiCad's IPC API, not the older SWIG plugin interface.
 - **The KiCad API switched on.** In KiCad, open Preferences › Plugins and tick **Enable KiCad API**.
-- **Python 3.12 or later as KiCad's plugin interpreter.** Set it in Preferences › Plugins › **Python Interpreter**. KiCad keeps this setting as `api.interpreter_path` in `kicad_common.json`.
-  - **macOS:** KiCad bundles Python 3.9, which is too old. Install Python 3.12 or later from [python.org](https://www.python.org/downloads/macos/) or with Homebrew (`brew install python@3.12`). Then select it, for example `/Library/Frameworks/Python.framework/Versions/3.12/bin/python3` or `/opt/homebrew/bin/python3.12`.
-  - **Windows:** KiCad bundles Python 3.11.5, which is also too old. Install Python 3.12 or later from [python.org](https://www.python.org/downloads/windows/) and select its `pythonw.exe`, for example `C:\Users\<you>\AppData\Local\Programs\Python\Python312\pythonw.exe`.
-  - **Linux:** KiCad uses the system `python3`, which must be 3.12 or later. It also needs your distribution's `python3-venv` and `python3-wxgtk4.0` packages (Debian and Ubuntu names):
+- **KiCad's own Python.** There is nothing to install or set up: the plugin runs on the Python KiCad uses for plugins by default, which is its bundled Python on macOS (3.9) and Windows (3.11) and the system `python3` on Linux. It needs Python 3.9 or later.
+  - **Linux:** the system `python3` also needs your distribution's `python3-venv` and `python3-wxgtk4.0` packages (Debian and Ubuntu names):
     - Without `python3-venv`, KiCad builds the plugin's environment with no pip, so the plugin's libraries never install and the plugin never loads. Install `python3-venv`, delete the plugin's environment folder (see below), and restart KiCad.
     - Without `python3-wxgtk4.0`, the plugin opens a read-only report in your browser instead of its dialog (see [Without the dialog](#without-the-dialog)).
-    - Any Python other than the system `python3` has no wxPython on Linux: the distribution's package is built for the system Python only, and PyPI has no Linux wxPython wheel. With such an interpreter, the plugin shows the browser report.
+  - **If you changed Preferences › Plugins › Python Interpreter,** set it back to KiCad's own Python: click **Detect Automatically** beside it, which picks KiCad's bundled Python on macOS and Windows and the system `python3` on Linux. On macOS no other Python can run KiCad plugins, because KiCad passes its own Python settings (`PYTHONHOME` and `PYTHONPATH`) to the interpreter it starts, so a different one stops at start-up and the plugin's environment stays empty.
 - **After changing the interpreter, rebuild the plugin's environment.** KiCad 10.0.6 does not rebuild it on its own. Right-click the plugin in Preferences › Plugins › Action Plugins and choose **Recreate Plugin Environment**, or delete the environment folder, then restart KiCad. The folder is:
 
   | System | Plugin environment |
@@ -29,9 +27,9 @@ Each number is the one the rftools.io web calculators give for the same inputs. 
   | Linux | `~/.cache/kicad/10.0/python-environments/io.rftools.kicad` |
   | Windows | `%LOCALAPPDATA%\KiCad\10.0\python-environments\io.rftools.kicad` |
 
-If the interpreter is too old, the plugin computes nothing. It says which Python it found and how to change it.
+If the interpreter is older than 3.9, the plugin computes nothing. It says which Python it found and how to set KiCad's own back.
 
-KiCad installs the plugin's dependencies into the plugin's own environment from `plugins/requirements.txt`: the rftools.io SDK (`rftools-io`), KiCad's Python library (`kicad-python`), and wxPython on macOS and Windows.
+KiCad installs the plugin's two dependencies into the plugin's own environment from `plugins/requirements.txt`: KiCad's Python library (`kicad-python`) and `certifi`, the certificate bundle the plugin checks rftools.io's HTTPS certificate against (KiCad's bundled Python on macOS has no certificates of its own). The plugin calls the rftools.io API with Python's standard library. wxPython, for the dialog, comes with KiCad on macOS and Windows and from `python3-wxgtk4.0` on Linux.
 
 ## Install
 
@@ -97,6 +95,7 @@ If rftools.io refuses a call, the dialog says why and what to do. Results comput
 | Key not accepted | the key link |
 | Too many requests | how long to wait |
 | No connection | that rftools.io could not be reached, and any cached results |
+| Certificate not verified | that rftools.io's HTTPS certificate could not be checked, why, and how to reinstall the plugin's certificates |
 
 ## What a run costs
 
@@ -113,7 +112,7 @@ Before each run, the dialog states the most calls the run will use and how many 
 
 ## What is sent to rftools.io
 
-Each request holds a calculator name, such as `microstrip-impedance`, and numbers: widths, heights, εr, copper thickness, a current or a target. It also carries your key and the HTTP client's standard headers.
+Each request holds a calculator name, such as `microstrip-impedance`, and numbers: widths, heights, εr, copper thickness, a current or a target. It also carries your key (in the `X-API-Key` header, over HTTPS only) and `User-Agent: rftools-kicad/<version>`.
 
 The plugin never sends the board file, net or net-class names, layer names, the project name or its path.
 
@@ -148,19 +147,21 @@ Writing from the plugin turns on by itself once you run it on a KiCad release wi
 
 ## Without the dialog
 
-If wxPython cannot be loaded, the plugin opens a report in your browser instead. This happens on Linux without `python3-wxgtk4.0`, and on Linux with any interpreter other than the system `python3`. The report shows:
+If wxPython cannot be loaded, the plugin opens a report in your browser instead. This happens on Linux without `python3-wxgtk4.0`, and on Linux with any interpreter other than the system `python3` (the distribution's wxPython is built for the system Python only, and PyPI has no Linux wxPython wheel). The report shows:
 
 - the layer model;
 - the calculations planned;
 - the impedance of every net class's track width on every signal layer, with provenance;
 - any refusal.
 
-It spends calls only if the run fits your remaining allowance. Otherwise it shows cached results only. The report has no controls and cannot write to net classes. Install wxPython for the full dialog.
+It spends calls only if the run fits your remaining allowance. Otherwise it shows cached results only. The report has no controls and cannot write to net classes. On Linux, install `python3-wxgtk4.0` for the full dialog.
 
 ## Troubleshooting
 
-- **"needs Python 3.12 or later"**: set KiCad's plugin interpreter as described under [Requirements](#requirements). Then rebuild the plugin's environment and restart KiCad.
+- **"needs Python 3.9 or later"**: KiCad's plugin interpreter was changed to an older Python. Set it back to KiCad's own as described under [Requirements](#requirements), rebuild the plugin's environment and restart KiCad.
+- **On macOS, the plugin never appears after you set another Python as the interpreter**: that Python cannot start under KiCad (see [Requirements](#requirements)). Click **Detect Automatically** in Preferences › Plugins, choose **Recreate Plugin Environment**, and restart KiCad.
 - **The plugin still runs on the old Python after you changed the interpreter**: KiCad 10.0.6 keeps the old environment. Right-click the plugin in Preferences › Plugins › Action Plugins and choose **Recreate Plugin Environment**, or delete the environment folder listed under [Requirements](#requirements). Then restart KiCad.
+- **"The TLS certificate of rftools.io could not be verified"**: the plugin could not check rftools.io's HTTPS certificate, so it sent nothing. Choose **Recreate Plugin Environment** to reinstall its certificates (`certifi`). A network that inspects HTTPS, as some company networks do, presents its own certificate, which the plugin trusts only if Python does: on Windows and Linux, install the network's root certificate in the system; on macOS, KiCad's Python does not read the Keychain, so start KiCad with `SSL_CERT_FILE` naming a file that holds it.
 - **On Linux, the plugin never appears or never starts**: check that `python3-venv` is installed. Then delete the environment folder and restart KiCad.
 - **"Could not connect to KiCad"**: tick Enable KiCad API in Preferences › Plugins, then run the action again from the PCB editor.
 - **On Windows without a GPU, the plugin waits or cannot connect** (a remote desktop session or a virtual machine): KiCad may be showing a modal "Could not use OpenGL" notice, possibly behind another window. KiCad's API does not answer until you close that notice.
@@ -180,11 +181,13 @@ The plugin keeps three files on your computer, and none of them is sent anywhere
 ## Development
 
 ```sh
-python3.12 -m venv .venv
-.venv/bin/pip install "kicad-python==0.8.0" rftools-io jsonschema packaging pytest respx ruff
+python3 -m venv .venv          # any Python from 3.9; CI tests 3.9, 3.11, 3.12 and 3.13
+.venv/bin/pip install "kicad-python==0.8.0" certifi jsonschema packaging pytest ruff
 .venv/bin/pip install "wxPython>=4.2.2,<4.3"   # optional: the wx dialog tests
 .venv/bin/ruff check . && .venv/bin/python -m pytest -q
 ```
+
+To test on the interpreter macOS users have, make a scratch environment from KiCad's bundled Python the way KiCad does, with its wx: `/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3 -m venv --system-site-packages /tmp/kicad39`, then install the same packages into it and run the tests with `PYTHONNOUSERSITE=1`. Never install into the bundled interpreter itself. The API client's tests run against a local HTTP server, so the suite makes no call to rftools.io.
 
 To release, set the version in `metadata.json` and `plugins/rftools_kicad/__init__.py`, commit, and push a `v<version>` tag. `.github/workflows/release.yml` then checks the versions and runs CI and the live golden cases. It builds the archive, creates the GitHub release, and publishes the PCM repository to GitHub Pages.
 

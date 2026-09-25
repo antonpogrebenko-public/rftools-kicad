@@ -13,7 +13,7 @@ import pytest
 
 from rftools_kicad import api as A
 from rftools_kicad import settings as S
-from tests.support import KEY, OTHER_KEY, USAGE, FakeClient, sdk_available, sdk_error
+from tests.support import KEY, OTHER_KEY, USAGE, FakeClient, api_error
 
 posix_only = pytest.mark.skipif(os.name == "nt", reason="file modes are POSIX")
 
@@ -150,11 +150,10 @@ def test_the_environment_overrides_the_saved_key(tmp_path):
     assert S.load_settings(tmp_path / "none.json", environ={}).api_key is None
 
 
-@pytest.mark.skipif(not sdk_available(), reason="rftools-io is not importable")
 def test_a_rejected_key_is_not_saved(tmp_path):
     path = tmp_path / "settings.json"
     client = FakeClient()
-    client.usage_error = sdk_error("auth")
+    client.usage_error = api_error("auth")
     with pytest.raises(S.KeyRejected) as info:
         S.save_key(KEY, lambda key: client, path=path)
     assert S.KEY_URL in str(info.value) and KEY[:13] not in str(info.value)
@@ -170,13 +169,19 @@ def test_a_key_that_cannot_be_checked_is_not_saved(tmp_path):
     assert not path.exists()
 
 
-def test_a_missing_sdk_means_the_key_is_not_saved(tmp_path):
-    def factory(key):
-        raise A.SdkUnavailable("The rftools-io library could not be loaded (ImportError: x).")
-
-    with pytest.raises(S.KeyNotChecked, match="could not be loaded"):
-        S.save_key(KEY, factory, path=tmp_path / "settings.json")
-    assert not (tmp_path / "settings.json").exists()
+def test_a_key_is_checked_through_the_plugins_client(tmp_path, service):
+    path = tmp_path / "settings.json"
+    service.answer(401, {"detail": "This API key is not valid. It may have been revoked.",
+                         "errorKind": "invalid_request"})
+    service.answer(200, dict(USAGE))
+    with pytest.raises(S.KeyRejected, match="did not accept the API key rfc_OTHERkey"):
+        S.save_key(OTHER_KEY, lambda key: service.client(key), path=path)
+    assert not path.exists()
+    usage = S.save_key(KEY, lambda key: service.client(key), path=path)
+    assert usage["remaining"] == 40 and usage["tier"] == "free"
+    assert [(r.method, r.path) for r in service.requests] == [("GET", "/api/py/v1/usage")] * 2
+    assert [r.headers["x-api-key"] for r in service.requests] == [OTHER_KEY, KEY]
+    assert json.loads(path.read_text())["apiKey"] == KEY
 
 
 def test_something_that_is_not_a_key_is_refused_without_a_request(tmp_path):
@@ -203,7 +208,6 @@ def test_an_unreadable_settings_file_is_empty(tmp_path):
     assert S.load_settings(path, environ={}).api_key is None
 
 
-@pytest.mark.skipif(not sdk_available(), reason="rftools-io is not importable")
 def test_no_log_record_carries_more_of_a_key_than_its_public_id(tmp_path, caplog):
     # The conftest guard checks every test; this one drives every logging path
     # that could see a key and checks the records explicitly.
@@ -211,7 +215,7 @@ def test_no_log_record_carries_more_of_a_key_than_its_public_id(tmp_path, caplog
     S.save_key(KEY, usage_client, path=tmp_path / "settings.json")
     for kind in ("quota", "auth", "rate", "offline", "server", "invalid", "not_found"):
         client = FakeClient()
-        client.errors.append(sdk_error(kind, retry_after=10_000))
+        client.errors.append(api_error(kind, retry_after=10_000))
         api = A.Api(client, key_id=S.public_id(KEY), sleep=lambda s: None)
         from rftools_kicad.mapping import single_ended
         from rftools_kicad.stackup import layer_model

@@ -3,10 +3,10 @@
 One API call per target: the layer's forward inputs, the input to solve for
 (``traceWidth``, or ``traceSpacing`` for a pair's gap), the target output and
 value, and the manufacturing grid (0.001 mm unless the user sets another) go to
-``POST /v1/calculate/solve`` through the SDK. The service returns the grid value
-and the forward result at exactly that value, so the impedance the dialog shows
-beside a suggested width is a forward computation by the same calculator the
-web page runs. There is no search in the plugin.
+``POST /v1/calculate/solve`` through the plugin's client. The service returns
+the grid value and the forward result at exactly that value, so the impedance
+the dialog shows beside a suggested width is a forward computation by the same
+calculator the web page runs. There is no search in the plugin.
 
 A target no value in the calculator's range reaches comes back ``reached:
 false`` with the value that came nearest, and is shown as unreachable with

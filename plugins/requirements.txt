@@ -1,3 +1,2 @@
-rftools-io>=0.4,<0.5
 kicad-python>=0.8,<0.10
-wxPython>=4.2.2,<4.3; sys_platform != "linux"
+certifi>=2024.2.2,<2028

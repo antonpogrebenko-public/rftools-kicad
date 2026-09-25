@@ -19,27 +19,29 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install "ruff>=0.16,<0.17"
-      - name: Ruff
+      - name: Ruff (target py39, from pyproject.toml)
         run: ruff check .
 
   test:
+    # The plugin runs on KiCad's own Python (design Decision 7a): 3.9 on macOS,
+    # 3.11 on Windows, the system python3 on Linux (3.11 to 3.13).
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13"]
+        python-version: ["3.9", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
-        # kicad-python pinned to the release the plugin is built against;
-        # rftools-io at whatever PyPI has (the plugin imports nothing 0.4-only
-        # at module import).
+        # kicad-python pinned to the release the plugin is built against; the
+        # plugin's other dependency is certifi. No SDK: the plugin calls the
+        # API with its own standard-library client.
         run: |
           python -m pip install --upgrade pip
-          pip install "kicad-python==0.8.0" rftools-io jsonschema pytest respx packaging
+          pip install "kicad-python==0.8.0" "certifi>=2024.2.2" jsonschema pytest packaging
       - name: Package metadata against KiCad's pinned schemas
         run: python -m pytest -q tests/test_package.py
       - name: Golden cases
@@ -53,7 +55,7 @@ jobs:
 
   wheels:
     # KiCad installs requirements.txt with `pip install --only-binary :all:`:
-    # every dependency needs a wheel for every platform and Python it runs on.
+    # every dependency needs a wheel for every interpreter the plugin runs on.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,5 +63,5 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip packaging
-      - name: Wheels for macOS, Windows and Linux on CPython 3.12 and 3.13
+      - name: Wheels for macOS cp39, Windows cp311 and Linux cp311 to cp313
         run: python scripts/check_wheels.py

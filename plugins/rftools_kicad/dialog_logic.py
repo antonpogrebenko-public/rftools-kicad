@@ -417,7 +417,7 @@ class DialogState:
         if self._api is None:
             try:
                 self._api = self.services.api()
-            except Exception as exc:  # no key, or rftools-io did not load
+            except Exception as exc:  # no key
                 return None, redact(str(exc))
         return self._api, None
 

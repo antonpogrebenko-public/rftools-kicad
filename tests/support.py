@@ -1,4 +1,4 @@
-"""Fixtures shared by the tests: stackups, kicad-python messages, a fake SDK client."""
+"""Fixtures shared by the tests: stackups, kicad-python messages, a fake API client."""
 from __future__ import annotations
 
 import copy
@@ -215,7 +215,7 @@ def kipy_netclass(
     return NetClass(message)
 
 
-# ── A fake SDK client ────────────────────────────────────────────────────────
+# ── A fake API client ────────────────────────────────────────────────────────
 
 PROVENANCE = {
     "method": "calculator",
@@ -266,21 +266,21 @@ def solve_response(
 
 
 class FakeClient:
-    """Records what it is asked, answers from callables, raises what it is told to.
+    """``client.Client`` without HTTP: records what it is asked, answers from
+    callables, raises what it is told to.
 
     ``calls`` holds ``(method, body)`` with the body as the service would
-    receive it, so a test can assert exactly what would be sent.
+    receive it (as ``client.Client`` builds it), so a test can assert exactly
+    what would be sent.
     """
 
-    def __init__(self, *, calculate=None, solve=None, usage=None, has_solve=True):
+    def __init__(self, *, calculate=None, solve=None, usage=None):
         self.calls: list = []
         self.errors: list = []  # raised, in order, by the next metered calls
         self.usage_error = None
         self._calculate = calculate or self._default_calculate
         self._solve = solve or self._default_solve
         self._usage = dict(USAGE) if usage is None else usage
-        if not has_solve:
-            self.solve = None  # an SDK without Client.solve (rftools-io 0.3)
 
     @property
     def metered(self) -> list:
@@ -325,55 +325,167 @@ class FakeClient:
         return solve_response(slug, inputs, solve_for, output, target, value=0.321, grid=grid)
 
 
-# ── SDK exceptions ───────────────────────────────────────────────────────────
+# ── rftools.io on 127.0.0.1 ──────────────────────────────────────────────────
 
 
-def sdk_available() -> bool:
-    try:
-        import rftools.exceptions  # noqa: F401
-    except Exception:
-        return False
-    return True
+class Received:
+    """One request as the fake service received it."""
+
+    def __init__(self, method: str, path: str, headers: dict, body: bytes):
+        self.method = method
+        self.path = path
+        self.headers = headers  # lower-case names
+        self.body = body
+
+    @property
+    def json(self):
+        return json.loads(self.body.decode("utf-8")) if self.body else None
 
 
-def sdk_error(kind: str, **fields):
-    """The exception the SDK raises for *kind*, built as the SDK builds it."""
-    from rftools import exceptions as e
+class FakeService:
+    """An HTTP server on 127.0.0.1 standing in for rftools.io, for the real client.
+
+    Answers come from :meth:`answer` in order, then from ``handler(received)``
+    when set; each is ``(status, body, headers)`` with *body* a dict or list
+    (sent as JSON), or bytes/str (sent as they are, as an HTML page).
+    ``requests`` records everything received; ``delay`` holds each answer back.
+    """
+
+    def __init__(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        service = self
+        self.requests: list = []
+        self.answers: list = []
+        self.handler = None
+        self.delay = 0.0
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def _serve(self):
+                import time
+
+                length = int(self.headers.get("Content-Length") or 0)
+                received = Received(
+                    self.command, self.path,
+                    {k.lower(): v for k, v in self.headers.items()},
+                    self.rfile.read(length) if length else b"",
+                )
+                service.requests.append(received)
+                if service.answers:
+                    status, body, headers = service.answers.pop(0)
+                elif service.handler is not None:
+                    status, body, headers = service.handler(received)
+                else:
+                    status, body, headers = 500, {"detail": "no answer queued"}, {}
+                if service.delay:
+                    time.sleep(service.delay)
+                if isinstance(body, (dict, list)):
+                    payload, kind = json.dumps(body).encode("utf-8"), "application/json"
+                else:
+                    payload = body.encode("utf-8") if isinstance(body, str) else (body or b"")
+                    kind = "text/html; charset=utf-8"
+                self.send_response(status)
+                self.send_header("Content-Type", kind)
+                self.send_header("Content-Length", str(len(payload)))
+                for name, value in (headers or {}).items():
+                    self.send_header(name, value)
+                self.end_headers()
+                self.wfile.write(payload)
+
+            do_GET = do_POST = _serve
+
+            def log_message(self, *args):  # quiet
+                pass
+
+        class Server(ThreadingHTTPServer):
+            daemon_threads = True
+
+            def handle_error(self, request, client_address):  # a client that gave up
+                pass
+
+        self._server = Server(("127.0.0.1", 0), Handler)
+        self._thread = threading.Thread(
+            target=self._server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        )
+        self._thread.start()
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self._server.server_address[1]}/api/py/v1"
+
+    def answer(self, status: int, body=None, headers=None) -> None:
+        self.answers.append((status, body, headers or {}))
+
+    def client(self, key: str = KEY, **kwargs):
+        from rftools_kicad.client import Client
+
+        kwargs.setdefault("max_retries", 0)
+        return Client(key, base_url=self.base_url, **kwargs)
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+# ── The client's errors, as it builds them from an answer ─────────────────────
+
+#: The 402 body production sends (backend/src/services/metering.py refusal_body).
+QUOTA_BODY = {
+    "detail": "This account's 5 API calls for September are used. They reset on 2026-10-01.",
+    "errorKind": "rate_limited",
+    "reason": "allowance",
+    "limit": 5,
+    "used": 5,
+    "upgradeUrl": "https://rftools.io/pricing",
+    "overageUrl": None,
+    "resetAt": "2026-10-01T00:00:00Z",
+}
+
+
+def answer_error(status: int, body=None, headers=None):
+    """What ``client.Client`` raises for an HTTP answer (*body*: a dict, bytes or None)."""
+    from rftools_kicad import client
+
+    raw = body if isinstance(body, (bytes, type(None))) else json.dumps(body).encode()
+    return client.error_for_response(status, headers or {}, raw)
+
+
+def api_error(kind: str, **fields):
+    """The error ``client.Client`` raises for *kind*, built from the answer that causes it."""
+    import urllib.error
+
+    from rftools_kicad import client
 
     if kind == "quota":
-        error = e.QuotaError(
-            "Quota exceeded.", retry_after=fields.get("retry_after", 3600),
-            reason="allowance", limit=5, used=5,
-            reset_at=fields.get("reset_at", "2026-10-01T00:00:00Z"),
-            upgrade_url=fields.get("upgrade_url", "https://rftools.io/pricing"),
-            overage_url=fields.get("overage_url"),
-        )
-        error.status_code = 402
-    elif kind == "auth":
-        error = e.AuthError("Authentication failed: invalid", key_url=fields.get("key_url"))
-        error.status_code = fields.get("status", 401)
-    elif kind == "rate":
-        error = e.RateLimitError(
-            "Rate limit exceeded", retry_after=fields.get("retry_after", 2), limit=30,
-            window_seconds=60,
-        )
-        error.status_code = 429
-    elif kind == "offline":
-        error = e.APIError("Network error: [Errno 8] nodename nor servname provided", 0)
-    elif kind == "server":
-        error = e.APIError("Server error after 3 retries: 503", 503)
-    elif kind == "invalid":
-        error = e.ValidationError(
-            "Input validation failed",
-            detail=[{"param": "traceWidth", "value": -1, "reason": "must be positive"}],
-        )
-        error.status_code = 400
-    elif kind == "not_found":
-        error = e.NotFound("Calculator not found")
-        error.status_code = 404
-    else:
-        raise ValueError(kind)
-    return error
+        body = dict(QUOTA_BODY, resetAt=fields.get("reset_at", QUOTA_BODY["resetAt"]),
+                    upgradeUrl=fields.get("upgrade_url", QUOTA_BODY["upgradeUrl"]),
+                    overageUrl=fields.get("overage_url"))
+        return answer_error(402, body, {"Retry-After": str(fields.get("retry_after", 3600))})
+    if kind == "auth":
+        body = {"detail": "This API key is not valid. It may have been revoked.",
+                "errorKind": "invalid_request"}
+        if fields.get("key_url"):
+            body["keyUrl"] = fields["key_url"]
+        return answer_error(fields.get("status", 401), body)
+    if kind == "rate":
+        body = {"detail": "Too many requests.", "errorKind": "rate_limited", "limit": 30,
+                "windowSeconds": 60}
+        return answer_error(429, body, {"Retry-After": str(fields.get("retry_after", 2))})
+    if kind == "offline":
+        return client.transport_error(urllib.error.URLError(ConnectionRefusedError(61, "refused")))
+    if kind == "server":
+        return answer_error(503, {"detail": "Could not check the API key. Nothing was charged; "
+                                            "try again shortly.", "errorKind": "transient"})
+    if kind == "invalid":
+        return answer_error(400, {"detail": "Input 'traceWidth' is not a finite number.",
+                                  "errorKind": "invalid_request", "inputs": ["traceWidth"]})
+    if kind == "not_found":
+        return answer_error(404, {"detail": "Calculator 'nope' not found",
+                                  "errorKind": "invalid_request"})
+    raise ValueError(kind)
 
 
 # ── A fake KiCad project for net-class writes ────────────────────────────────

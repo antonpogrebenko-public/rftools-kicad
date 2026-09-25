@@ -5,7 +5,7 @@
     "description": "Reads the board's stackup and net classes and computes microstrip, stripline and differential impedance, the width or gap for a target impedance, the IPC-2152 width for a current, and via figures through the rftools.io API.",
     "runtime": {
         "type": "python",
-        "min_version": "3.12"
+        "min_version": "3.9"
     },
     "actions": [
         {

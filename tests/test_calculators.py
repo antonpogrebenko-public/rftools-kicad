@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 
 import pytest
 
@@ -24,6 +25,8 @@ def test_the_committed_file_matches_the_monorepo_catalogue():
     extractor = _extractor()
     if not extractor.monorepo_present():
         pytest.skip("the monorepo's calculator files are not present (standalone checkout)")
+    if sys.version_info < (3, 12):
+        pytest.skip("the backend's calculators run on Python 3.12")
     try:
         fresh = extractor.render(extractor.extract())
     except ImportError as exc:  # the backend's calculators need something not installed

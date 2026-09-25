@@ -1,8 +1,9 @@
 name: Live golden cases
 
-# G1–G3 against the production rftools.io API through the real SDK
-# (scripts/live_golden.py): weekly, before each release is published
-# (release.yml calls this workflow), and on demand.
+# G1–G3 against the production rftools.io API through the plugin's own client
+# (scripts/live_golden.py, rftools_kicad/client.py): weekly, before each release
+# is published (release.yml calls this workflow), and on demand. It runs on
+# Python 3.9, the oldest interpreter the plugin supports (KiCad's on macOS).
 #
 # Cost: at most 3 metered API calls per run — G1 one solve, G2 one forward
 # call, G3 one forward call. Reading the allowance first is free. Nothing is
@@ -45,12 +46,12 @@ jobs:
       - uses: actions/setup-python@v5
         if: steps.key.outputs.set == 'true'
         with:
-          python-version: "3.12"
-      - name: Install the SDK the plugin declares
+          python-version: "3.9"
+      - name: Install what the plugin declares
         if: steps.key.outputs.set == 'true'
         run: |
           python -m pip install --upgrade pip
-          pip install "$(grep -i '^rftools-io' plugins/requirements.txt)"
+          pip install --only-binary :all: -r plugins/requirements.txt
       - name: G1 solve, G2 and G3 forward (3 calls at most)
         if: steps.key.outputs.set == 'true'
         run: python scripts/live_golden.py

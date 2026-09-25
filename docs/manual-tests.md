@@ -1,10 +1,24 @@
 # Manual tests
 
-The unit tests cover what the plugin decides: the layer model, the class form, the budget, the key flow, the run, refusals, the net-class write and restore, the report, and the release files. They use a fake KiCad and a fake API. What they cannot reach is recorded here from real runs: KiCad launching the action, the wx dialog on screen, a real `SetNetClasses`, and an install from the Plugin and Content Manager.
+The unit tests cover what the plugin decides: the layer model, the class form, the budget, the key flow, the run, refusals, the net-class write and restore, the report, and the release files. They use a fake KiCad and a fake API; the API client's own tests run it over real HTTP against a local server. CI runs them on Python 3.9, 3.11, 3.12 and 3.13, and they also pass on KiCad's bundled Python 3.9.13 (macOS) with its wx, where the dialog tests run for real. What they cannot reach is recorded here from real runs: KiCad building the plugin's environment and launching the action, the wx dialog on screen, HTTPS from KiCad's own Python, a real `SetNetClasses`, and an install from the Plugin and Content Manager.
+
+## Setup: KiCad's own Python
+
+The plugin runs on the interpreter KiCad uses by default (design Decision 7a): the bundled Python 3.9.13 on macOS, the bundled `pythonw.exe` 3.11.5 on Windows, and the system `python3` on Linux. Check this before every other section, on each platform.
+
+1. In Preferences › Plugins, **Python Interpreter** is KiCad's own. If another was set (earlier spikes set python.org 3.12 on macOS), click **Detect Automatically**. On macOS it reads `/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3`.
+2. On Linux, `python3-venv` and `python3-wxgtk4.0` are installed.
+3. Right-click the plugin under Action Plugins, choose **Recreate Plugin Environment** (or delete the environment folder listed in the README), and restart KiCad.
+4. The plugin's environment is built from that interpreter: `<env>/bin/python --version` (`<env>\Scripts\python.exe` on Windows) gives 3.9.13 on macOS, 3.11.5 on Windows, or the system version on Linux. `<env>/bin/python -m pip list` shows `kicad-python` and `certifi` (on macOS `certifi` may come from KiCad's own site packages instead) and no `rftools-io`.
+5. The action **rftools.io: impedance and widths** is on the PCB editor's toolbar, and the dialog opens (the report in the browser means wx did not import).
+6. With a key saved, the budget line shows the allowance remaining. That read went over HTTPS from KiCad's Python with certifi's certificates: on macOS the bundled Python has none of its own. Checked from the command line on 2026-09-25: the bundled 3.9.13 trusts 0 certificates by default and 121 with the plugin's context, and `GET /api/py/v1/usage` without a key answered 401 with the key link.
+
+| Date | Platform | KiCad | Interpreter (version) | Environment built | Dialog | HTTPS | Notes |
+|---|---|---|---|---|---|---|---|
 
 ## The dialog on KiCad 10.0 (task 4.1)
 
-Not yet run. Record the platform, KiCad version, Python version and board for each run.
+Not yet run. Record the platform, KiCad version, Python version (KiCad's own, from the setup above) and board for each run.
 
 1. Launch **rftools.io: impedance and widths** from the PCB editor's toolbar.
 2. **Layer model.** Every copper layer is listed and ticked as a plane (KiCad reports no layer types). Untick the signal layers. The structures change at once, and no API call is made.
@@ -46,9 +60,9 @@ Run this on the first release that contains KiCad commit `d622c37a` (a later 10.
 
 ## Install from the custom repository (task 6.2)
 
-Not yet run: it needs the repository public and `v0.1.0` released. On at least two platforms (one Windows or macOS, one Linux):
+Not yet run: it needs the repository public and `v0.1.0` released. On at least two platforms (one Windows or macOS, one Linux), with the interpreter left at KiCad's default:
 
-1. Add `https://antonpogrebenko-public.github.io/rftools-kicad/repository.json` in the Plugin and Content Manager, install the plugin, and apply.
+1. Add `https://antonpogrebenko-public.github.io/rftools-kicad/repository.json` in the Plugin and Content Manager, install the plugin, and apply. Nothing else is installed first: no Python, no packages (on Linux, only the distribution's `python3-venv` and `python3-wxgtk4.0`).
 2. Run G1, G2 and G3 on boards built from the stackups in `golden/kicad-golden.json`. Each result must match the golden file to a relative 1e-6.
 3. Apply and restore one net class on a KiCad later than 10.0.6. On 10.0.6, check that the values are listed for Board Setup and nothing is written.
 4. Record how many calls a first run of the four-layer reference board used, and name the board. A symmetric stack computes both outer layers in one call, so it uses 8 calls instead of 12.

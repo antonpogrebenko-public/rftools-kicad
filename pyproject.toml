@@ -2,26 +2,25 @@
 # installs it from the PCM archive and builds its environment from
 # plugins/requirements.txt.
 #
-# The plugin needs Python 3.12 or later. KiCad makes the plugin's environment
-# from the interpreter set in Preferences > Plugins, and on macOS KiCad 10's
-# bundled one is 3.9, so the entrypoint (plugins/rftools_kicad/main.py) stays
-# parseable by Python 3.9 and says what to do before importing anything else;
-# tests/test_main.py checks that with a 3.9 grammar.
+# The plugin runs on KiCad's own Python, 3.9 or later (design Decision 7a):
+# KiCad 10's bundled 3.9.13 on macOS and 3.11.5 on Windows, the system python3
+# on Linux. Everything under plugins/ must run on 3.9 (CI tests 3.9 to 3.13), and
+# the entrypoint (plugins/rftools_kicad/main.py) checks the version before
+# importing anything else; tests/test_main.py parses it with a 3.9 grammar.
 
 [project]
 name = "rftools-kicad-dev"
 version = "0.1.0"
 description = "Development environment for the rftools.io KiCad plugin"
-requires-python = ">=3.12"
+requires-python = ">=3.9"
 
 [project.optional-dependencies]
 dev = [
     "kicad-python==0.8.0",
-    "rftools-io",
+    "certifi>=2024.2.2",
     "jsonschema>=4.18",
     "packaging",
     "pytest>=7.4",
-    "respx>=0.21",
     "ruff>=0.6",
 ]
 
@@ -31,7 +30,7 @@ pythonpath = ["plugins", "."]
 addopts = "-ra"
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py39"
 line-length = 100
 extend-exclude = [".venv", "venv*"]
 
@@ -39,8 +38,8 @@ extend-exclude = [".venv", "venv*"]
 select = ["E", "F", "W", "I", "B", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
-# The entrypoint must parse on Python 3.9, so it keeps Optional[...] and the
-# typing aliases a 3.9 interpreter can evaluate.
+# The entrypoint starts on whatever interpreter a user set, even one older than
+# the plugin supports, to say so; it keeps Optional[...] and the typing aliases.
 "plugins/rftools_kicad/main.py" = ["UP"]
 
 [tool.ruff.lint.isort]

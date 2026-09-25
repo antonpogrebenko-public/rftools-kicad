@@ -1,7 +1,7 @@
 """Suite-wide guard: no log record may carry more of an API key than its public id.
 
 Every test runs with logging captured at DEBUG for every logger (the plugin's,
-the SDK's, httpx's), and fails at teardown if any record's message or
+its HTTP client's, kicad-python's), and fails at teardown if any record's message or
 traceback holds ``rfc_`` followed by more than the 8 characters of a key's
 public identifier (spec: "A failing call ... the log contains no part of the
 key beyond its public identifier").
@@ -48,3 +48,13 @@ def isolated_dirs(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
     monkeypatch.delenv("RFTOOLS_API_KEY", raising=False)
     yield
+
+
+@pytest.fixture
+def service():
+    """rftools.io on 127.0.0.1 for the real client (tests.support.FakeService)."""
+    from tests.support import FakeService
+
+    fake = FakeService()
+    yield fake
+    fake.close()

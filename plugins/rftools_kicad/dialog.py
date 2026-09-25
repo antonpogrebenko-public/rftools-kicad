@@ -288,8 +288,10 @@ class MainDialog(wx.Dialog):
         self.stale.SetForegroundColour(WARN)
         sizer.Add(self.stale, 0, wx.ALL, self.FromDIP(4))
         self.table = wx.ListCtrl(page, style=wx.LC_REPORT | wx.LC_HRULES | wx.LC_VRULES)
-        for index, (head, width) in enumerate(zip(COLUMNS + ("Note",), COLUMN_WIDTHS,
-                                                  strict=True)):
+        headers = COLUMNS + ("Note",)
+        if len(headers) != len(COLUMN_WIDTHS):  # zip(strict=True) needs Python 3.10
+            raise ValueError("COLUMN_WIDTHS needs one width per result column and the note")
+        for index, (head, width) in enumerate(zip(headers, COLUMN_WIDTHS)):
             self.table.InsertColumn(index, head, width=self.FromDIP(width))
         sizer.Add(self.table, 1, wx.EXPAND | wx.ALL, self.FromDIP(4))
         self.refusal_text = wx.StaticText(page, label="")

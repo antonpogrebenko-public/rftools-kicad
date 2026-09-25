@@ -1,8 +1,6 @@
 """Target searches: one solve call per target, read from recorded responses."""
 from __future__ import annotations
 
-import pytest
-
 from rftools_kicad import api as A
 from rftools_kicad.cache import ResultCache
 from rftools_kicad.mapping import differential, single_ended
@@ -17,9 +15,8 @@ from rftools_kicad.solve import (
 from rftools_kicad.stackup import layer_model
 from tests.support import (
     FakeClient,
+    api_error,
     golden_case,
-    sdk_available,
-    sdk_error,
     six_layer,
     solve_response,
     two_layer,
@@ -128,11 +125,10 @@ def test_the_default_grid_and_no_grid():
     assert "grid" not in target_request(single_ended(model, "F.Cu", 0.3), 50, grid=None).payload()
 
 
-@pytest.mark.skipif(not sdk_available(), reason="rftools-io is not importable")
 def test_a_refusal_is_carried_to_the_result():
     model = layer_model(two_layer())
     client = FakeClient()
-    client.errors.append(sdk_error("quota"))
+    client.errors.append(api_error("quota"))
     result = run_target(A.Api(client), target_request(single_ended(model, "F.Cu", 0.3), 50))
     assert not result.ok and result.refusal.kind == A.QUOTA
 

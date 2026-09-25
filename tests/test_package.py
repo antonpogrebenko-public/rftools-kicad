@@ -1,9 +1,11 @@
 """The package: plugin.json and metadata.json against KiCad's pinned schemas, icons, versions."""
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import struct
+import sys
 
 import jsonschema
 import pytest
@@ -44,7 +46,7 @@ def test_the_pinned_ipc_schema_is_the_one_plugin_json_names():
 def test_one_pcb_action_whose_entrypoint_and_icons_exist():
     plugin = load(PLUGIN_DIR / "plugin.json")
     assert plugin["identifier"] == rftools_kicad.IDENTIFIER == "io.rftools.kicad"
-    assert plugin["runtime"] == {"type": "python", "min_version": "3.12"}
+    assert plugin["runtime"] == {"type": "python", "min_version": "3.9"}
     [action] = plugin["actions"]
     assert action["scopes"] == ["pcb"]
     assert action["entrypoint"] == "rftools_kicad/main.py"
@@ -99,23 +101,55 @@ def test_the_icons_are_what_the_script_draws():
 # ── Dependencies ─────────────────────────────────────────────────────────────
 
 
-def test_requirements_are_bounded_and_wx_is_left_to_linux_distributions():
+def test_requirements_are_kicad_python_and_certifi_bounded():
     from packaging.requirements import Requirement
 
     lines = (PLUGIN_DIR / "requirements.txt").read_text(encoding="utf-8").splitlines()
     reqs = {r.name.lower(): r for r in map(Requirement, filter(None, lines))}
-    assert str(reqs["rftools-io"].specifier) == "<0.5,>=0.4"
+    # The SDK needs Python 3.12 and KiCad's own Python is 3.9 on macOS; wx comes
+    # with KiCad's bundled Python and from python3-wxgtk4.0 on Linux (Decision 7a).
+    assert set(reqs) == {"kicad-python", "certifi"}
     assert str(reqs["kicad-python"].specifier) == "<0.10,>=0.8"
-    wx = reqs["wxpython"]
-    assert str(wx.specifier) == "<4.3,>=4.2.2"
-    assert not wx.marker.evaluate({"sys_platform": "linux"})
-    assert wx.marker.evaluate({"sys_platform": "darwin"})
-    assert wx.marker.evaluate({"sys_platform": "win32"})
+    assert str(reqs["certifi"].specifier) == "<2028,>=2024.2.2"
     for req in reqs.values():
+        assert req.marker is None, req
         operators = {s.operator for s in req.specifier}
         assert ">=" in operators and "<" in operators, req
 
 
+def _modules():
+    return sorted((PLUGIN_DIR / "rftools_kicad").glob("*.py"))
+
+
 def test_every_module_defers_annotations():
-    for path in (PLUGIN_DIR / "rftools_kicad").glob("*.py"):
+    for path in _modules():
         assert "from __future__ import annotations" in path.read_text(encoding="utf-8"), path
+
+
+def test_every_module_parses_with_a_python_3_9_grammar():
+    for path in _modules() + [ROOT / "scripts" / "live_golden.py"]:
+        ast.parse(path.read_text(encoding="utf-8"), filename=str(path), feature_version=(3, 9))
+
+
+#: What the plugin may import: the standard library, itself, and what KiCad's
+#: plugin environment provides (requirements.txt, and wx from KiCad or Linux).
+ALLOWED_THIRD_PARTY = {"rftools_kicad", "kipy", "google", "certifi", "wx"}
+
+
+def test_the_plugin_imports_no_sdk_and_nothing_undeclared():
+    stdlib = set(getattr(sys, "stdlib_module_names", ())) or None  # 3.10+
+    for path in _modules():
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                names = [node.module or ""]
+            else:
+                continue
+            for name in names:
+                top = name.split(".")[0]
+                assert top not in ("rftools", "httpx", "requests"), (path.name, name)
+                if stdlib is not None:
+                    assert top in stdlib or top in ALLOWED_THIRD_PARTY or top == "__future__", (
+                        path.name, name,
+                    )

@@ -51,7 +51,7 @@ import json
 import re
 import sys
 import zipfile
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -163,7 +163,7 @@ def zip_bytes(entries: list, timestamp: int, with_directories: bool = True) -> b
     With *with_directories*, directory entries are written too (KiCad ignores them
     in a package; unzip tools like them).
     """
-    date = datetime.fromtimestamp(max(timestamp, ZIP_EPOCH), UTC).timetuple()[:6]
+    date = datetime.fromtimestamp(max(timestamp, ZIP_EPOCH), timezone.utc).timetuple()[:6]
     directories = sorted({
         "/".join(name.split("/")[:i]) + "/"
         for name, _ in entries
@@ -245,7 +245,9 @@ def resource(url: str, data: bytes, timestamp: int) -> dict:
         "url": url,
         "sha256": sha256(data),
         "update_timestamp": timestamp,
-        "update_time_utc": datetime.fromtimestamp(timestamp, UTC).strftime("%Y-%m-%d %H:%M:%S"),
+        "update_time_utc": datetime.fromtimestamp(timestamp, timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        ),
     }
 
 
@@ -291,7 +293,7 @@ def build(
 ) -> dict:
     """Check, then write the archive and the repository files into *out*; returns release.json."""
     version = check_tag(tag, root)  # before anything is written
-    timestamp = int(timestamp if timestamp is not None else datetime.now(UTC).timestamp())
+    timestamp = int(timestamp if timestamp is not None else datetime.now(timezone.utc).timestamp())
     metadata = load_json(root / "metadata.json")
     archive, install_size = build_archive(root, timestamp)
     name = archive_name(version)

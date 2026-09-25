@@ -19,10 +19,9 @@ from tests.support import (
     FakeKiCad,
     FakeProject,
     FakeServices,
+    api_error,
     four_layer,
     sample_classes,
-    sdk_available,
-    sdk_error,
 )
 
 CLASSES = [
@@ -164,7 +163,6 @@ def test_without_a_key_nothing_is_computed_and_the_key_link_is_given(tmp_path):
     assert client.calls == []
 
 
-@pytest.mark.skipif(not sdk_available(), reason="rftools-io not installed")
 def test_a_refusal_is_shown_beside_what_was_computed(tmp_path):
     client = FakeClient()
     count = {"n": 0}
@@ -172,7 +170,7 @@ def test_a_refusal_is_shown_beside_what_was_computed(tmp_path):
     def calculate(slug, inputs):
         count["n"] += 1
         if count["n"] == 3:
-            raise sdk_error("quota")
+            raise api_error("quota")
         return FakeClient._default_calculate(slug, inputs)
 
     client._calculate = calculate

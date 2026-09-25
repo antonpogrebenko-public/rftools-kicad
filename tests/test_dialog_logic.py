@@ -12,8 +12,6 @@ import os
 import stat
 import sys
 
-import pytest
-
 from rftools_kicad import dialog_logic as D
 from rftools_kicad import netclasses as N
 from rftools_kicad.mapping import (
@@ -38,14 +36,13 @@ from tests.support import (
     FakeKiCad,
     FakeProject,
     FakeServices,
+    api_error,
     calc_response,
     four_layer,
     golden_case,
     kipy_stackup,
     missing_er,
     sample_classes,
-    sdk_available,
-    sdk_error,
     six_layer,
     solve_response,
     two_layer,
@@ -281,10 +278,9 @@ def test_a_pasted_key_is_checked_then_saved_and_only_its_public_id_shown(tmp_pat
     assert [c[0] for c in state.services.client.calls] == ["usage"]
 
 
-@pytest.mark.skipif(not sdk_available(), reason="rftools-io not installed")
 def test_a_rejected_key_is_not_saved_and_the_message_has_no_key(tmp_path):
     client = FakeClient()
-    client.usage_error = sdk_error("auth")
+    client.usage_error = api_error("auth")
     state = state_for(tmp_path, key=None, client=client)
     saved, message = state.save_key(KEY)
     assert not saved
@@ -348,14 +344,13 @@ def test_a_result_outside_the_range_names_the_bound(tmp_path):
     assert row.range == "outside: traceWidth 0.01 mm is below the minimum 0.02 mm"
 
 
-@pytest.mark.skipif(not sdk_available(), reason="rftools-io not installed")
 def test_a_402_mid_run_keeps_what_was_computed_and_says_how_to_get_more(tmp_path):
     count = {"n": 0}
 
     def calculate(slug, inputs):
         count["n"] += 1
         if count["n"] == 2:
-            raise sdk_error("quota", overage_url="https://rftools.io/dashboard/?overage=1")
+            raise api_error("quota", overage_url="https://rftools.io/dashboard/?overage=1")
         return answer(slug, inputs)
 
     state = state_for(tmp_path, client=FakeClient(calculate=calculate, solve=solver()))
@@ -373,13 +368,12 @@ def test_a_402_mid_run_keeps_what_was_computed_and_says_how_to_get_more(tmp_path
     assert rows[0].achieved == "52.25 Ω"  # still shown
 
 
-@pytest.mark.skipif(not sdk_available(), reason="rftools-io not installed")
 def test_offline_shows_cached_results_and_a_retry_runs_again(tmp_path):
     state = state_for(tmp_path)
     state.set_form("HighSpeed", selected=True)
     state.run()
     state.set_form("Power", selected=True)
-    state.services.client.errors.append(sdk_error("offline"))
+    state.services.client.errors.append(api_error("offline"))
     summary = state.run()
     high, power = summary.rows
     assert high.ok and high.cached

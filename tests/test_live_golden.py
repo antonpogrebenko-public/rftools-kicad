@@ -10,11 +10,10 @@ from tests.support import (
     KEY,
     USAGE,
     FakeClient,
+    api_error,
     calc_response,
     golden,
     golden_case,
-    sdk_available,
-    sdk_error,
 )
 from tests.support import ROOT as REPO
 
@@ -105,10 +104,9 @@ def test_too_little_allowance_runs_nothing():
     assert not results[0].ok and "has 2 calls left" in results[0].problems[0]
 
 
-@pytest.mark.skipif(not sdk_available(), reason="rftools-io not installed")
 def test_a_refusal_fails_the_case_with_its_message():
     client = production()
-    client.errors.append(sdk_error("auth"))
+    client.errors.append(api_error("auth"))
     results, _ = L.run(client, golden(), key_id="rfc_TESTkey0")
     assert not results[0].ok and "did not accept the API key rfc_TESTkey0" in results[0].problems[0]
 
@@ -135,45 +133,47 @@ def test_main_reports_to_the_step_summary_and_the_exit_code(tmp_path, capsys):
     assert "FAILED" in summary.read_text()
 
 
-@pytest.mark.skipif(
-    not sdk_available() or not hasattr(__import__("rftools").Client, "solve"),
-    reason="the installed rftools-io has no Client.solve (0.4)",
-)
-def test_through_the_real_sdk_over_http():
-    import json
-
-    import httpx
-    import respx
-    import rftools
-
-    base = "https://rftools.test/api/py/v1"
+def test_through_the_plugins_client_over_http(service):
     by_slug = {c["calculator"]: c for c in golden()["cases"]}
 
-    def calculate(request):
-        body = json.loads(request.content)
+    def answer(request):
+        if request.path.endswith("/usage"):
+            return 200, dict(USAGE), {}
+        body = request.json
         case = by_slug[body["slug"]]
-        return httpx.Response(200, json={
-            "slug": body["slug"], "values": case["outputs"], "warnings": [], "errors": [],
-            "provenance": {"version": "api@0123456789ab", "inputs": body["inputs"]},
-        })
-
-    def solve(request):
-        body = json.loads(request.content)
-        case = by_slug[body["slug"]]
-        return httpx.Response(200, json={
+        forward = {"slug": body["slug"], "values": case["outputs"], "warnings": [],
+                   "errors": [], "provenance": {"version": "api@0123456789ab",
+                                                "inputs": body["inputs"]}}
+        if not request.path.endswith("/solve"):
+            return 200, forward, {}
+        return 200, {
             "slug": body["slug"], "solveFor": body["solveFor"], "target": body["target"],
             "grid": body.get("grid"), "value": case["solve"]["value"],
             "unrounded": case["solve"]["unrounded"], "reached": True, "evaluations": 31,
-            "warnings": [],
-            "result": {"slug": body["slug"], "values": case["outputs"], "warnings": [],
-                       "errors": [], "provenance": {"version": "api@0123456789ab"}},
-        })
+            "warnings": [], "result": forward,
+        }, {}
 
-    with respx.mock(assert_all_called=True) as router:
-        router.get(f"{base}/usage").mock(return_value=httpx.Response(200, json=USAGE))
-        solved = router.post(f"{base}/calculate/solve").mock(side_effect=solve)
-        forward = router.post(f"{base}/calculate").mock(side_effect=calculate)
-        client = rftools.Client(api_key=KEY, base_url=base, max_retries=0)
-        results, requests = L.run(client, golden())
+    service.handler = answer
+    results, requests = L.run(service.client(), golden())
     assert all(r.ok for r in results), [r.problems for r in results]
-    assert requests == 3 and solved.call_count == 1 and forward.call_count == 2
+    paths = [r.path for r in service.requests]
+    assert paths == ["/api/py/v1/usage", "/api/py/v1/calculate/solve",
+                     "/api/py/v1/calculate", "/api/py/v1/calculate"]
+    assert requests == 3
+
+
+def test_main_makes_the_plugins_client(monkeypatch, capsys):
+    from rftools_kicad import api as A
+    from rftools_kicad.client import Client
+
+    made = []
+
+    def make(key):
+        made.append(A.make_client(key))
+        return production()
+
+    monkeypatch.setattr(L, "make_client", make)
+    assert L.main([], environ={"RFTOOLS_API_KEY": KEY}) == 0
+    [client] = made
+    assert isinstance(client, Client) and client.base_url == "https://rftools.io/api/py/v1"
+    assert KEY not in capsys.readouterr().out

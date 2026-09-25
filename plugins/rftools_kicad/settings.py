@@ -4,8 +4,8 @@
 Decision 6), created readable by its owner only (mode 0600 from the moment it
 exists, in a 0700 directory, on macOS and Linux; the user profile's ACL on
 Windows). ``RFTOOLS_API_KEY`` in the environment overrides it, as it does for
-the SDK. A pasted key is checked with the usage endpoint, which never spends a
-call, before it is saved.
+the rftools.io SDK and CLI. A pasted key is checked with the usage endpoint,
+which never spends a call, before it is saved.
 
 The key is never logged or shown whole: :func:`public_id` gives the part the
 rftools.io dashboard lists (``rfc_`` and the next 8 characters, the service's
@@ -28,7 +28,7 @@ import re
 import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -140,7 +140,7 @@ class RedactingFilter(logging.Filter):
     """Rewrites a record so no key survives in its message or traceback.
 
     Attach it to a *handler* (a logger's own filters do not see records
-    propagated from other loggers, such as the SDK's or httpx's).
+    propagated from other loggers, such as the client's or kicad-python's).
     """
 
     def __init__(self, keys: tuple = ()) -> None:
@@ -218,12 +218,12 @@ def save_key(
 ) -> dict:
     """Check *key* with a usage request, then save it; returns the usage figures.
 
-    ``client_factory(key)`` builds an SDK-like client (``rftools.Client``).
+    ``client_factory(key)`` builds a client (``api.make_client``).
     Raises :class:`KeyRejected` when the service refuses the key and
     :class:`KeyNotChecked` when it cannot be asked; in both cases nothing is
     written. The usage request is never metered.
     """
-    from rftools_kicad.api import AUTH, Api, SdkUnavailable  # api imports this module
+    from rftools_kicad.api import AUTH, Api  # api imports this module
 
     key = (key or "").strip()
     if not key.startswith(KEY_PREFIX) or len(key) <= PUBLIC_ID_LENGTH:
@@ -231,11 +231,7 @@ def save_key(
             f"That does not look like an rftools.io API key (they start with {KEY_PREFIX}). "
             f"Get a free key at {KEY_URL}"
         )
-    try:
-        client = client_factory(key)
-    except SdkUnavailable as exc:
-        raise KeyNotChecked(f"The key was not saved: {exc}") from exc
-    usage, refusal = Api(client, key_id=public_id(key)).usage()
+    usage, refusal = Api(client_factory(key), key_id=public_id(key)).usage()
     if refusal is not None:
         if refusal.kind == AUTH:
             raise KeyRejected(refusal.message)
@@ -246,7 +242,7 @@ def save_key(
         "version": 1,
         "apiKey": key,
         "keyId": public_id(key),
-        "savedAt": datetime.now(UTC).isoformat(timespec="seconds"),
+        "savedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     })
     write_private_json(path, data)
     log.info("Saved API key %s to %s", public_id(key), path)

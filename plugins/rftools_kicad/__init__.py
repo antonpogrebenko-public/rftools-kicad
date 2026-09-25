@@ -6,7 +6,8 @@ presentation layer:
 
     stackup       the board's stackup -> a neutral dict -> a LayerModel
     mapping       a LayerModel layer + net-class values -> calculator inputs
-    api           the rftools.io SDK behind a cache, with refusals mapped by type
+    client        the rftools.io API over urllib (calculate, solve, usage)
+    api           the client behind a cache, with refusals mapped by type
     cache         results.json in the user cache directory
     solve         the width or gap for a target through one solve call
     budget        the calls a run will use, before any is spent
@@ -17,10 +18,12 @@ presentation layer:
     report        the HTML report when wx cannot load (no write control)
     main          the entrypoint KiCad runs
 
-Nothing here imports the SDK or kicad-python at module import, so a missing or
+Nothing here imports kicad-python or wx at module import, so a missing or
 incompatible dependency becomes a readable message rather than a traceback in
-KiCad's status bar. The plugin needs Python 3.12 or later; ``main`` checks that
-before importing anything else.
+KiCad's status bar. The plugin runs on KiCad's own Python, 3.9 or later
+(design Decision 7a): the API client is the standard library's ``urllib`` with
+certifi's certificates, and ``main`` checks the version before importing
+anything else.
 """
 from __future__ import annotations
 

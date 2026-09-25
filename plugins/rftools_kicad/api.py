@@ -1,25 +1,23 @@
-"""The rftools.io SDK behind the result cache, with every refusal mapped by type.
+"""The rftools.io API behind the result cache, with every refusal mapped by type.
 
-:class:`Api` wraps an SDK-like client — ``rftools.Client`` from ``rftools-io``,
-or a fake in tests — and runs :class:`~rftools_kicad.mapping.Computation`
-objects through it:
+:class:`Api` wraps a client — :class:`rftools_kicad.client.Client`, the
+plugin's own standard-library client, or a fake in tests — and runs
+:class:`~rftools_kicad.mapping.Computation` objects through it:
 
 * a computation already in the cache is answered from it, with no request;
 * ``calculate`` calls ``client.calculate(slug, inputs)``;
 * ``solve`` calls ``client.solve(slug, inputs, solve_for, target_output,
-  target_value, grid=, range=)`` (``rftools-io`` 0.4). An SDK without it is
-  reported as unsupported for that computation; forward figures still run.
+  target_value, grid=, range=)``.
 
 Only the slug, the inputs and the solve fields reach the client (spec: "The
 plugin SHALL send the service only calculator inputs").
 
-Refusals are classified by the exception's *type* — the SDK's ``QuotaError``
-(402), ``AuthError`` (401/403), ``RateLimitError`` (429), ``ValidationError``,
-``NotFound`` and ``APIError`` (``status_code`` 0 for a network failure, 5xx
-after the SDK's own retries) — and never by the text of a message (design
-Decision 4). When the SDK cannot be imported the same classes are recognised
-by their ``status_code``, which the SDK sets on every exception it raises for
-a response.
+Refusals are classified by the exception's *type* — the client's
+``QuotaError`` (402), ``AuthError`` (401/403), ``RateLimitError`` (429),
+``RequestError`` (400/422), ``NotFound`` (404), ``ServiceError`` (5xx after the
+client's retries) and ``TransportError`` (no answer) — and never by the text of
+a message (design Decision 4). Another exception carrying an HTTP
+``status_code`` is classified by that status.
 
 A refusal that concerns the account or the connection stops the run: later
 computations are answered from the cache where possible and are otherwise
@@ -30,12 +28,24 @@ Results computed before a refusal are kept by the caller and stay valid.
 from __future__ import annotations
 
 import logging
+import socket
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from rftools_kicad.cache import ResultCache
+from rftools_kicad.client import (
+    ApiError,
+    AuthError,
+    Client,
+    NotFound,
+    QuotaError,
+    RateLimitError,
+    RequestError,
+    ServiceError,
+    TransportError,
+)
 from rftools_kicad.mapping import CALCULATE, SOLVE, Computation
 from rftools_kicad.settings import KEY_URL
 
@@ -46,14 +56,12 @@ QUOTA = "quota"  # 402: the month's allowance is spent
 AUTH = "auth"  # 401/403: the key is missing, unknown or revoked
 RATE_LIMITED = "rate_limited"  # 429 twice
 OFFLINE = "offline"  # no connection
-SERVICE = "service"  # 5xx after the SDK's retries
+SERVICE = "service"  # 5xx after the client's retries
 INVALID = "invalid"  # 400/422: the service refused these inputs
 NOT_FOUND = "not_found"  # 404
-UNSUPPORTED = "unsupported"  # the installed SDK has no solve
-SDK_MISSING = "sdk_missing"  # rftools-io could not be imported
 
 #: Refusals after which no further request is made in this run.
-STOPPING = frozenset({QUOTA, AUTH, RATE_LIMITED, OFFLINE, SERVICE, SDK_MISSING})
+STOPPING = frozenset({QUOTA, AUTH, RATE_LIMITED, OFFLINE, SERVICE})
 
 #: The longest a 429 is waited out before the run stops instead.
 MAX_RATE_LIMIT_WAIT = 120.0
@@ -105,28 +113,9 @@ class Outcome:
         return self.response is not None
 
 
-class SdkUnavailable(RuntimeError):
-    """``rftools-io`` could not be imported; the message says why."""
-
-
-def make_client(api_key: str) -> Any:
-    """An ``rftools.Client`` for *api_key*. Raises :class:`SdkUnavailable`."""
-    try:
-        import rftools
-    except Exception as exc:  # any import failure is the same to the user
-        raise SdkUnavailable(
-            "The rftools-io library could not be loaded "
-            f"({type(exc).__name__}: {exc}). To reinstall it, {RECREATE_ENVIRONMENT}."
-        ) from exc
-    return rftools.Client(api_key=api_key)
-
-
-def sdk_version() -> str | None:
-    try:
-        import rftools
-    except Exception:
-        return None
-    return getattr(rftools, "__version__", None)
+def make_client(api_key: str) -> Client:
+    """The plugin's rftools.io client for *api_key*."""
+    return Client(api_key)
 
 
 class Api:
@@ -224,11 +213,7 @@ class Api:
             result = self._client.calculate(computation.slug, computation.input_dict)
             response = normalise_calculation(result)
         elif computation.kind == SOLVE:
-            solve = getattr(self._client, "solve", None)
-            if solve is None:
-                self.requests -= 1
-                raise _SolveUnsupported()
-            result = solve(
+            result = self._client.solve(
                 computation.slug,
                 computation.input_dict,
                 computation.solve_for,
@@ -258,46 +243,26 @@ class Api:
 # ── Classification ───────────────────────────────────────────────────────────
 
 
-class _SolveUnsupported(Exception):
-    pass
-
-
-_sdk_errors_cache: list = []
-
-
-def _sdk_errors() -> Any:
-    """``rftools.exceptions``, or None when the SDK cannot be imported."""
-    if not _sdk_errors_cache:
-        try:
-            import rftools.exceptions as errors
-        except Exception:
-            errors = None
-        _sdk_errors_cache.append(errors)
-    return _sdk_errors_cache[0]
+#: The client's errors, by type (most specific first).
+_KINDS = (
+    (QuotaError, QUOTA),
+    (AuthError, AUTH),
+    (RateLimitError, RATE_LIMITED),
+    (RequestError, INVALID),
+    (NotFound, NOT_FOUND),
+    (TransportError, OFFLINE),
+    (ServiceError, SERVICE),
+)
 
 
 def _kind_of(exc: BaseException) -> str | None:
-    if isinstance(exc, _SolveUnsupported):
-        return UNSUPPORTED
-    if isinstance(exc, SdkUnavailable):
-        return SDK_MISSING
-    errors = _sdk_errors()
+    for error_type, kind in _KINDS:
+        if isinstance(exc, error_type):
+            return kind
     status = getattr(exc, "status_code", None)
-    if errors is not None and isinstance(exc, errors.RftoolsError):
-        if isinstance(exc, errors.QuotaError):
-            return QUOTA
-        if isinstance(exc, errors.AuthError):
-            return AUTH
-        if isinstance(exc, errors.RateLimitError):
-            return RATE_LIMITED
-        if isinstance(exc, errors.ValidationError):
-            return INVALID
-        if isinstance(exc, errors.NotFound):
-            return NOT_FOUND
-        if isinstance(exc, errors.APIError):
-            return OFFLINE if not status else SERVICE
+    if isinstance(exc, ApiError):
         return _kind_of_status(status) or SERVICE
-    if _is_transport_error(exc):
+    if isinstance(exc, (ConnectionError, TimeoutError, socket.timeout)):
         return OFFLINE
     return _kind_of_status(status)
 
@@ -320,16 +285,6 @@ def _kind_of_status(status: Any) -> str | None:
     if status >= 500:
         return SERVICE
     return None
-
-
-def _is_transport_error(exc: BaseException) -> bool:
-    if isinstance(exc, (ConnectionError, TimeoutError)):
-        return True
-    try:
-        import httpx
-    except Exception:
-        return False
-    return isinstance(exc, httpx.TransportError)
 
 
 def classify(
@@ -383,6 +338,12 @@ def classify(
             limit=_int(getattr(exc, "limit", None)),
         )
     if kind == OFFLINE:
+        if getattr(exc, "certificate", False):  # TLS verification failed: say so plainly
+            return Refusal(
+                OFFLINE,
+                f"{exc} Results already computed or cached are shown. To reinstall the "
+                f"plugin's certificates (certifi), {RECREATE_ENVIRONMENT}.",
+            )
         return Refusal(
             OFFLINE,
             "Could not reach rftools.io. Results already computed or cached are shown; "
@@ -396,15 +357,6 @@ def classify(
             "shown; try again later.",
             status=status,
         )
-    if kind == UNSUPPORTED:
-        version = sdk_version() or "installed"
-        return Refusal(
-            UNSUPPORTED,
-            f"The {version} rftools-io library has no solve call; the width or gap for a "
-            f"target needs rftools-io 0.4 or later. To update it, {RECREATE_ENVIRONMENT}.",
-        )
-    if kind == SDK_MISSING:
-        return Refusal(SDK_MISSING, str(exc))
     slug = computation.slug if computation else "the calculator"
     if kind == NOT_FOUND:
         return Refusal(NOT_FOUND, f"rftools.io has no calculator {slug}.", status=404)
@@ -420,11 +372,11 @@ def classify(
     )
 
 
-# ── Normalising SDK results to plain, cacheable dicts ────────────────────────
+# ── Normalising results to plain, cacheable dicts ────────────────────────────
 
 
 def normalise_calculation(result: Any) -> dict:
-    """``{slug, values, warnings, errors, provenance}`` from a CalculatorResult or a dict."""
+    """``{slug, values, warnings, errors, provenance}`` from a CalculateResult or a dict."""
     return {
         "slug": _get(result, "slug"),
         "values": dict(_get(result, "values") or {}),
@@ -435,7 +387,7 @@ def normalise_calculation(result: Any) -> dict:
 
 
 def normalise_solve(result: Any) -> dict:
-    """The solve response (design Decision 10) from an SDK SolveResult or a dict."""
+    """The solve response (design Decision 10) from a SolveResult or a dict."""
     target = _get(result, "target")
     if target is not None and not isinstance(target, dict):
         target = {"output": _get(target, "output"), "value": _get(target, "value")}
@@ -455,7 +407,7 @@ def normalise_solve(result: Any) -> dict:
 
 
 def normalise_usage(usage: Any) -> dict:
-    """The usage figures from an SDK Usage/ResponseUsage or a dict."""
+    """The usage figures from a client Usage or a dict."""
     allowance = _int(_get(usage, "allowance"))
     used = _int(_get(usage, "used"))
     remaining = _get(usage, "remaining")
@@ -472,12 +424,7 @@ def normalise_usage(usage: Any) -> dict:
 
 
 def _provenance(value: Any) -> dict | None:
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        return dict(value)
-    raw = getattr(value, "raw", None)  # rftools.types.Provenance keeps the wire object
-    return dict(raw) if isinstance(raw, dict) or hasattr(raw, "items") else None
+    return dict(value) if isinstance(value, Mapping) else None
 
 
 def _get(obj: Any, *names: str) -> Any:

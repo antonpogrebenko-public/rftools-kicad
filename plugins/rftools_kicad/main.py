@@ -2,12 +2,13 @@
 
 KiCad starts this file with the plugin environment's Python, made from the
 interpreter set in Preferences › Plugins (``api.interpreter_path`` in
-``kicad_common.json``). The plugin needs Python 3.12 or later, and KiCad 10's
-own interpreter is 3.9 on macOS and 3.11.5 on Windows, so this file must parse
-and start on Python 3.9: it checks the version before importing anything else
-and, when the interpreter is too old, says so and how to fix it (a wx dialog
-when wx imports; otherwise the console, which KiCad 10.0.1+ shows in its
-status-bar messages, and a small HTML page opened in the browser).
+``kicad_common.json``). The plugin runs on KiCad's own Python — 3.9 on macOS,
+3.11 on Windows, the system ``python3`` on Linux — and needs 3.9 or later
+(design Decision 7a). So this file must parse and start on anything a user
+might have set: it checks the version before importing anything else and, when
+the interpreter is too old, says so and how to fix it (a wx dialog when wx
+imports; otherwise the console, which KiCad 10.0.1+ shows in its status-bar
+messages, and a small HTML page opened in the browser).
 tests/test_main.py parses this file with a 3.9 grammar; keep it plain
 (Optional[...] rather than ``X | None``, no ``match``) and import the plugin's
 own modules inside functions, after the check.
@@ -24,7 +25,7 @@ import sys
 import tempfile
 from typing import Any, Callable, List, Optional
 
-REQUIRED_PYTHON = (3, 12)
+REQUIRED_PYTHON = (3, 9)
 TITLE = "rftools.io board calculations"
 #: plugin.json's identifier, which names the plugin's environment folder.
 PLUGIN_ID = "io.rftools.kicad"
@@ -55,23 +56,20 @@ class PluginStartError(Exception):
 def python_too_old_message(
     version_info: Optional[Any] = None, executable: Optional[str] = None
 ) -> Optional[str]:
-    """The message for an interpreter older than 3.12, or None when it is new enough."""
+    """The message for an interpreter older than 3.9, or None when it is new enough."""
     version = tuple(version_info or sys.version_info)
     if version[:2] >= REQUIRED_PYTHON:
         return None
     found = ".".join(str(part) for part in version[:3])
     where = executable or sys.executable or "an unknown interpreter"
     return (
-        "The rftools.io plugin needs Python 3.12 or later. KiCad is running it with "
+        "The rftools.io plugin needs Python 3.9 or later. KiCad is running it with "
         "Python {found} ({where}).\n\n"
-        "Install Python 3.12 or later. KiCad's own Python is too old on macOS (3.9) and "
-        "Windows (3.11): install one from python.org. On Linux, KiCad uses the system "
-        "python3, which must be 3.12 or newer, with your distribution's python3-venv and "
-        "python3-wxgtk4.0 packages.\n\n"
-        "Then open Preferences › Plugins in KiCad and set Python Interpreter to the new "
-        "Python. KiCad 10.0.6 does not rebuild the plugin's environment on its own: "
-        "{recreate}, or delete the plugin's environment folder ({env} under KiCad's "
-        "python-environments cache), then restart KiCad."
+        "The plugin runs on KiCad's own Python and needs nothing else installed. Open "
+        "Preferences › Plugins in KiCad and set Python Interpreter back to KiCad's own "
+        "Python (on Linux, the system python3). KiCad 10.0.6 does not rebuild the "
+        "plugin's environment on its own: {recreate}, or delete the plugin's environment "
+        "folder ({env} under KiCad's python-environments cache), then restart KiCad."
     ).format(found=found, where=where, recreate=RECREATE_ENVIRONMENT, env=PLUGIN_ID)
 
 
@@ -180,9 +178,9 @@ def connect(factory: Optional[Callable[[], Any]] = None) -> Any:
 class Services:
     """What the presentation layer gets besides the model and the net classes.
 
-    ``api()`` builds the API client over the SDK with the configured key
-    (raising ``api.SdkUnavailable`` when rftools-io cannot load);
-    ``save_key(key)`` checks a pasted key with a usage request and saves it.
+    ``api()`` builds the API client with the configured key (raising
+    PluginStartError when there is none); ``save_key(key)`` checks a pasted
+    key with a usage request and saves it.
     ``kicad``, ``board`` and ``project`` are kicad-python handles, for the
     net-class writer; the core modules never touch them.
     """

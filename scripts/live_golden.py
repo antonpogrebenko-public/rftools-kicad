@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The golden cases G1–G3 against the production API, through the real SDK (task 5.3).
+"""The golden cases G1–G3 against the production API, through the plugin's client (task 5.3).
 
 Run by .github/workflows/live-golden.yml weekly, before each release is
 published, and on demand, with the ``RFTOOLS_API_KEY`` secret:
@@ -8,8 +8,8 @@ published, and on demand, with the ``RFTOOLS_API_KEY`` secret:
 
 Each case starts from its stackup in golden/kicad-golden.json, goes through
 the plugin's own stackup model and calculator mapping, and is sent through the
-plugin's API layer over ``rftools.Client`` — the path a user's run takes, with
-no result cache:
+plugin's API layer over its own client (``rftools_kicad.client``, urllib and
+certifi) — the path a user's run takes, with no result cache:
 
     G1  one solve: microstrip-impedance traceWidth for 50 Ω on the 0.001 mm grid
         must return the golden grid width, with the forward outputs at it
@@ -35,7 +35,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "plugins"))
 
-from rftools_kicad.api import Api, read_figure  # noqa: E402
+from rftools_kicad.api import Api, make_client, read_figure  # noqa: E402
 from rftools_kicad.mapping import input_spec, single_ended, trace_current  # noqa: E402
 from rftools_kicad.settings import public_id  # noqa: E402
 from rftools_kicad.solve import run_target, target_request  # noqa: E402
@@ -185,13 +185,8 @@ def main(argv: list | None = None, environ: dict | None = None, client_factory=N
               "G1–G3 were not run against the production API. Add the secret (a free key made "
               "through the key link with client=kicad-plugin) to run them.")
         return 0
-    if client_factory is None:
-        import rftools
-
-        def client_factory(k):
-            return rftools.Client(api_key=k)
-
-    results, requests = run(client_factory(key), load_golden(), key_id=public_id(key))
+    results, requests = run((client_factory or make_client)(key), load_golden(),
+                            key_id=public_id(key))
     text = report(results, requests)
     print(text)
     summary = environ.get("GITHUB_STEP_SUMMARY")
