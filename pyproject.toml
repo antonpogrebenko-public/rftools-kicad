@@ -1,0 +1,48 @@
+# Development tooling only. The plugin itself is not a pip package: KiCad
+# installs it from the PCM archive and builds its environment from
+# plugins/requirements.txt.
+#
+# The plugin needs Python 3.12 or later. KiCad makes the plugin's environment
+# from the interpreter set in Preferences > Plugins, and on macOS KiCad 10's
+# bundled one is 3.9, so the entrypoint (plugins/rftools_kicad/main.py) stays
+# parseable by Python 3.9 and says what to do before importing anything else;
+# tests/test_main.py checks that with a 3.9 grammar.
+
+[project]
+name = "rftools-kicad-dev"
+version = "0.1.0"
+description = "Development environment for the rftools.io KiCad plugin"
+requires-python = ">=3.12"
+
+[project.optional-dependencies]
+dev = [
+    "kicad-python==0.8.0",
+    "rftools-io",
+    "jsonschema>=4.18",
+    "packaging",
+    "pytest>=7.4",
+    "respx>=0.21",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["plugins", "."]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".venv", "venv*"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# The entrypoint must parse on Python 3.9, so it keeps Optional[...] and the
+# typing aliases a 3.9 interpreter can evaluate.
+"plugins/rftools_kicad/main.py" = ["UP"]
+
+[tool.ruff.lint.isort]
+required-imports = ["from __future__ import annotations"]
+known-first-party = ["rftools_kicad"]

@@ -1,0 +1,30 @@
+{
+    "$schema": "https://go.kicad.org/api/schemas/v1",
+    "identifier": "io.rftools.kicad",
+    "name": "rftools.io board calculations",
+    "description": "Reads the board's stackup and net classes and computes microstrip, stripline and differential impedance, the width or gap for a target impedance, the IPC-2152 width for a current, and via figures through the rftools.io API.",
+    "runtime": {
+        "type": "python",
+        "min_version": "3.12"
+    },
+    "actions": [
+        {
+            "identifier": "board-calculations",
+            "name": "rftools.io: impedance and widths",
+            "description": "Propose a layer model from the stackup, then compute impedance, target widths and gaps, current widths and via figures for the selected net classes.",
+            "show-button": true,
+            "scopes": [
+                "pcb"
+            ],
+            "entrypoint": "rftools_kicad/main.py",
+            "icons-light": [
+                "icons/rftools-light-24.png",
+                "icons/rftools-light-48.png"
+            ],
+            "icons-dark": [
+                "icons/rftools-dark-24.png",
+                "icons/rftools-dark-48.png"
+            ]
+        }
+    ]
+}

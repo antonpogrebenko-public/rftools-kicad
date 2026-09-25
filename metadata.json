@@ -1,0 +1,34 @@
+{
+    "$schema": "https://go.kicad.org/pcm/schemas/v2",
+    "name": "rftools.io board calculations",
+    "description": "Impedance, target widths and gaps, IPC-2152 current widths and via figures from your board's stackup, computed by rftools.io.",
+    "description_full": "Reads the open board's stackup and net classes and proposes a model per copper layer: microstrip on the outer layers, stripline between reference planes on the inner layers. You review and correct the model, and the plugin then computes, through the rftools.io API, single-ended and differential impedance, the track width or pair gap that reaches a target impedance, the IPC-2152 width for a current, and via impedance, capacitance, inductance and current capacity. Every number is the one the rftools.io web calculators give for the same inputs, shown with its formula reference.\n\nThe plugin sends rftools.io only calculator inputs (a calculator name and numbers), never the board, net names or the project. It needs a free rftools.io API key and the KiCad API enabled in Preferences > Plugins. Nothing is written to the board unless you select net classes, review the change and confirm.",
+    "identifier": "io.rftools.kicad",
+    "type": "plugin",
+    "author": {
+        "name": "rftools.io",
+        "contact": {
+            "web": "https://rftools.io"
+        }
+    },
+    "license": "MIT",
+    "resources": {
+        "homepage": "https://rftools.io",
+        "repository": "https://github.com/antonpogrebenko-public/rftools-kicad",
+        "documentation": "https://rftools.io/docs/api"
+    },
+    "tags": [
+        "impedance",
+        "stackup",
+        "transmission-line",
+        "calculator"
+    ],
+    "versions": [
+        {
+            "version": "0.1.0",
+            "status": "testing",
+            "kicad_version": "10.0",
+            "runtime": "ipc"
+        }
+    ]
+}
