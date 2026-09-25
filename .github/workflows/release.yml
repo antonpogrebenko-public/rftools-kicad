@@ -1,0 +1,204 @@
+name: Release
+
+# On a v* tag: check the versions agree, run CI and the live golden cases,
+# build the PCM archive, attach it to a GitHub release, and publish the custom
+# PCM repository (repository.json, packages.json, resources.zip) to GitHub Pages:
+#
+#   https://antonpogrebenko-public.github.io/rftools-kicad/repository.json
+#
+# Before the first release (founder, at v0.1.0):
+#   1. Make the repository public. GitHub Pages on the free plan needs it, and
+#      KiCad downloads the archive from the release without credentials.
+#   2. Settings > Pages > Build and deployment > Source: "GitHub Actions".
+#      The check job fails, naming this, until it is set.
+#   3. Settings > Environments > github-pages > Deployment branches and tags:
+#      add a tag rule "v*". Pages creates the environment allowing only the
+#      default branch, and a tag's deployment is refused otherwise.
+#
+# To release: set the version in metadata.json and in
+# plugins/rftools_kicad/__init__.py (plugin.json has no version field), commit,
+# then `git tag v<version> && git push origin v<version>`.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Versions and Pages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The tag, metadata.json and rftools_kicad.__version__ agree
+        run: python scripts/build_release.py check --tag "$GITHUB_REF_NAME"
+      - name: GitHub Pages is enabled and deploys from Actions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! build_type=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type 2>/dev/null); then
+            echo "::error title=GitHub Pages is not enabled::The custom PCM repository is served from GitHub Pages, which is not enabled for $GITHUB_REPOSITORY. Make the repository public, then set Settings > Pages > Source to 'GitHub Actions', and push the tag again. Nothing was built or published."
+            exit 1
+          fi
+          if [ "$build_type" != "workflow" ]; then
+            echo "::error title=GitHub Pages deploys from a branch::Settings > Pages > Source is '$build_type'; set it to 'GitHub Actions' so this workflow can publish repository.json. Nothing was built or published."
+            exit 1
+          fi
+          echo "GitHub Pages deploys from Actions."
+
+  ci:
+    name: CI
+    needs: check
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build the archive and the PCM repository
+    needs: [check, ci]
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.build.outputs.version }}
+      archive: ${{ steps.build.outputs.archive }}
+      status: ${{ steps.build.outputs.status }}
+      sha256: ${{ steps.build.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "jsonschema>=4.18"
+      - name: The package list published now (earlier versions stay listed)
+        run: |
+          base=$(python scripts/build_release.py pages-url --repo "$GITHUB_REPOSITORY")
+          if curl -fsSL "$base/packages.json?v=$GITHUB_SHA" -o previous-packages.json; then
+            echo "Keeping the versions listed at $base/packages.json"
+          else
+            rm -f previous-packages.json
+            echo "No package list is published yet; this is the first."
+          fi
+      - name: Build
+        id: build
+        run: |
+          previous=()
+          [ -f previous-packages.json ] && previous=(--previous previous-packages.json)
+          python scripts/build_release.py build --tag "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" --out dist \
+            --timestamp "$(git log -1 --format=%ct)" "${previous[@]}"
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          r = json.load(open("dist/release.json"))
+          for key in ("version", "archive", "status", "sha256"):
+              print(f"{key}={r[key]}")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+
+  live-golden:
+    name: Live golden cases
+    needs: build
+    uses: ./.github/workflows/live-golden.yml
+    secrets: inherit
+
+  release:
+    name: GitHub release
+    needs: [build, live-golden]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.build.outputs.version }}
+      ARCHIVE: ${{ needs.build.outputs.archive }}
+      STATUS: ${{ needs.build.outputs.status }}
+      SHA256: ${{ needs.build.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: dist
+      - name: Create the release, or replace its archive on a re-run
+        run: |
+          base=$(python scripts/build_release.py pages-url --repo "$GITHUB_REPOSITORY")
+          cat > notes.md <<EOF
+          rftools.io board calculations for KiCad 10.0 and later (IPC API plugin), version $VERSION ($STATUS).
+
+          Install from KiCad's Plugin and Content Manager: Manage repositories, add
+          \`$base/repository.json\`, then install "rftools.io board calculations".
+
+          Archive SHA-256: \`$SHA256\`
+          EOF
+          prerelease=()
+          [ "$STATUS" != "stable" ] && prerelease=(--prerelease)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "dist/$ARCHIVE" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "dist/$ARCHIVE" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "rftools.io KiCad plugin $VERSION" --notes-file notes.md "${prerelease[@]}"
+          fi
+      - name: The published archive is the one packages.json names
+        run: |
+          mkdir published
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$ARCHIVE" --dir published
+          python scripts/build_release.py verify --archive "published/$ARCHIVE" \
+            --packages dist/site/packages.json --version "$VERSION"
+
+  pages:
+    name: Publish the PCM repository
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}repository.json
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: dist
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/site
+      - id: deployment
+        uses: actions/deploy-pages@v4
+      - name: repository.json and packages.json are served as built
+        env:
+          BASE: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          BASE="${BASE%/}/"
+          for file in repository.json packages.json; do
+            ok=""
+            for attempt in 1 2 3 4 5 6 7 8 9 10; do
+              if curl -fsSL -H "Cache-Control: no-cache" "${BASE}${file}?v=$GITHUB_SHA" -o "served-$file" \
+                 && cmp -s "served-$file" "dist/site/$file"; then
+                ok=1; break
+              fi
+              sleep 15
+            done
+            if [ -z "$ok" ]; then
+              echo "::error::${BASE}${file} does not serve the file this release built."
+              exit 1
+            fi
+            echo "${BASE}${file} serves this release's file."
+          done

@@ -9,6 +9,12 @@ its via — into the list of computations a run makes (design Decision 3):
     per class   one IPC-2152 width for the current, on the layer the user names
                 (else the first), and one via check
 
+A class given a coplanar gap is computed as grounded coplanar waveguide
+(``coplanar-waveguide``, structure 1) on the outer layers, where the plane
+inward is the waveguide's ground: its single-ended figure and its width for a
+target are taken at that gap to the side grounds. On an inner layer the same
+class is stripline, as without the gap.
+
 :func:`estimate` counts them — one call per computation, identical requests
 once, minus those the result cache already answers — and reads the account's
 remaining allowance from the usage endpoint, which is never metered. It makes
@@ -29,6 +35,7 @@ from rftools_kicad.mapping import (
     MappingError,
     NetClassValues,
     Options,
+    coplanar,
     differential,
     input_spec,
     single_ended,
@@ -67,6 +74,9 @@ class ClassRequest:
     current_layer: str | None = None
     #: Check the class's via.
     via: bool = False
+    #: Coplanar gap to the side grounds, mm: single-ended figures on outer
+    #: layers are grounded coplanar waveguide at this gap.
+    cpw_gap_mm: float | None = None
 
 
 @dataclass(frozen=True)
@@ -193,9 +203,10 @@ def _single_ended_items(model, request, layer, options, grid):
     nc = request.netclass
     width_mm = nc.mm("track_width_nm")
     items = []
+    gap = request.cpw_gap_mm
     if width_mm is not None:
         items.append(_item(
-            nc.name, layer, FIGURE_IMPEDANCE, single_ended, model, layer, width_mm, options
+            nc.name, layer, FIGURE_IMPEDANCE, _se_forward, model, layer, width_mm, options, gap
         ))
     elif request.impedance_target is None:
         items.append(PlannedItem(
@@ -205,17 +216,25 @@ def _single_ended_items(model, request, layer, options, grid):
     if request.impedance_target is not None:
         items.append(_item(
             nc.name, layer, FIGURE_WIDTH_FOR_TARGET,
-            _width_solve, model, layer, width_mm, request.impedance_target, options, grid,
+            _width_solve, model, layer, width_mm, request.impedance_target, options, grid, gap,
         ))
     return items
 
 
-def _width_solve(model, layer, width_mm, target, options, grid) -> Computation:
+def _se_forward(model, layer, width_mm, options, cpw_gap_mm=None) -> Computation:
+    """Single-ended impedance on *layer*: coplanar on an outer layer when a gap is given."""
+    structure = model.structure(layer)
+    if cpw_gap_mm is not None and structure is not None and structure.kind == "microstrip":
+        return coplanar(model, layer, width_mm, cpw_gap_mm, grounded=True)
+    return single_ended(model, layer, width_mm, options)
+
+
+def _width_solve(model, layer, width_mm, target, options, grid, cpw_gap_mm=None) -> Computation:
     """The width solve, starting at the class's width, else the calculator's default."""
     if width_mm is None:
-        slug = single_ended(model, layer, 1.0, options).slug
+        slug = _se_forward(model, layer, 1.0, options, cpw_gap_mm).slug
         width_mm = input_spec(slug, "traceWidth")["default"]
-    return target_request(single_ended(model, layer, width_mm, options), target, grid)
+    return target_request(_se_forward(model, layer, width_mm, options, cpw_gap_mm), target, grid)
 
 
 def _gap_solve(model, layer, width_mm, gap_mm, target, grid) -> Computation:

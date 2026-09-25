@@ -4,14 +4,18 @@ The core modules turn the board KiCad reports into calculator requests, run
 them through the rftools.io API with a local cache, and hand plain data to a
 presentation layer:
 
-    stackup   the board's stackup -> a neutral dict -> a LayerModel
-    mapping   a LayerModel layer + net-class values -> calculator inputs
-    api       the rftools.io SDK behind a cache, with refusals mapped by type
-    cache     results.json in the user cache directory
-    solve     the width or gap for a target through one solve call
-    budget    the calls a run will use, before any is spent
-    settings  the API key and options in the user config directory
-    main      the entrypoint KiCad runs
+    stackup       the board's stackup -> a neutral dict -> a LayerModel
+    mapping       a LayerModel layer + net-class values -> calculator inputs
+    api           the rftools.io SDK behind a cache, with refusals mapped by type
+    cache         results.json in the user cache directory
+    solve         the width or gap for a target through one solve call
+    budget        the calls a run will use, before any is spent
+    settings      the API key and options in the user config directory
+    netclasses    the previewed, verified, restorable net-class write
+    dialog_logic  everything the dialog decides, testable without a display
+    dialog        the wxPython dialog, a thin view over dialog_logic
+    report        the HTML report when wx cannot load (no write control)
+    main          the entrypoint KiCad runs
 
 Nothing here imports the SDK or kicad-python at module import, so a missing or
 incompatible dependency becomes a readable message rather than a traceback in

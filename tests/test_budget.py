@@ -149,3 +149,24 @@ def test_a_target_without_a_class_width_starts_from_the_calculators_default():
                                          impedance_target=50)])
     [solve] = plan.computations
     assert solve.kind == "solve" and solve.input_dict["traceWidth"] == 1.2
+
+
+def test_a_coplanar_gap_makes_outer_layers_grounded_cpw_and_leaves_inner_layers_stripline():
+    from rftools_kicad.mapping import COPLANAR, CPW_GROUNDED, STRIPLINE
+    from tests.support import six_layer
+
+    model = layer_model(six_layer())
+    request = ClassRequest(SE50, layers=("F.Cu", "In2.Cu"), impedance_target=50, cpw_gap_mm=0.2)
+    plan = plan_run(model, [request])
+    by = {(i.layer, i.figure): i.computation for i in plan.items}
+    outer = by[("F.Cu", FIGURE_IMPEDANCE)]
+    assert outer.slug == COPLANAR
+    assert outer.input_dict["structure"] == CPW_GROUNDED
+    assert outer.input_dict["gapWidth"] == 0.2 and outer.input_dict["traceWidth"] == 0.3
+    solve = by[("F.Cu", FIGURE_WIDTH_FOR_TARGET)]
+    assert solve.slug == COPLANAR and solve.solve_for == "traceWidth"
+    assert solve.input_dict["gapWidth"] == 0.2
+    assert solve.search_range == (0.02, 10.0)  # coplanar-waveguide states no maximum width
+    assert by[("In2.Cu", FIGURE_IMPEDANCE)].slug == STRIPLINE
+    assert by[("In2.Cu", FIGURE_WIDTH_FOR_TARGET)].slug == STRIPLINE
+    assert not plan.problems

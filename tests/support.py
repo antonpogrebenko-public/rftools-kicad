@@ -374,3 +374,173 @@ def sdk_error(kind: str, **fields):
     else:
         raise ValueError(kind)
     return error
+
+
+# ── A fake KiCad project for net-class writes ────────────────────────────────
+
+
+def netclass_proto(name: str, **kwargs):
+    """The ``project_settings_pb2.NetClass`` KiCad 10.0 reports (NCT_IMPLICIT)."""
+    return kipy_netclass(name, **kwargs).proto
+
+
+class FakeKiCad:
+    """KiCad's command channel as KiCad 10.0.6 answers ``SetNetClasses`` (spike, 2026-09-25).
+
+    ``MMM_MERGE`` replaces a named class whole with the one sent; an implicit
+    class is dropped silently (``NETCLASS::Deserialize`` refuses it) and the
+    command still answers success. A class read back is reported implicit with
+    itself as its one constituent, as KiCad reports every project class.
+    ``ignore`` drops every class (a KiCad that answers success and applies
+    nothing); ``refuse`` is raised instead of answering.
+    """
+
+    def __init__(self, classes, *, ignore=False, refuse=None, on_send=None):
+        from kipy.proto.common.types import project_settings_pb2
+
+        self.classes = {}
+        for proto in classes:
+            copy = project_settings_pb2.NetClass()
+            copy.CopyFrom(proto)
+            self.classes[copy.name] = copy
+        self.sent = []  # every command received, as sent
+        self.ignore = ignore
+        self.refuse = refuse
+        self.on_send = on_send
+
+    def send(self, command, response_type):
+        from kipy.proto.common.commands import project_commands_pb2
+        from kipy.proto.common.types import MapMergeMode, project_settings_pb2
+
+        copy = type(command)()
+        copy.CopyFrom(command)
+        self.sent.append(copy)
+        if self.on_send is not None:
+            self.on_send(copy)
+        if self.refuse is not None:
+            raise self.refuse
+        assert isinstance(command, project_commands_pb2.SetNetClasses)
+        assert command.merge_mode == MapMergeMode.MMM_MERGE
+        for sent in command.net_classes:
+            if self.ignore or sent.type != project_settings_pb2.NetClassType.NCT_EXPLICIT:
+                continue
+            stored = project_settings_pb2.NetClass()
+            stored.CopyFrom(sent)
+            stored.type = project_settings_pb2.NetClassType.NCT_IMPLICIT
+            del stored.constituents[:]
+            stored.constituents.append(sent.name)
+            self.classes[sent.name] = stored
+        return response_type()
+
+    def serialized(self) -> dict:
+        return {n: p.SerializeToString(deterministic=True) for n, p in self.classes.items()}
+
+
+class FakeProject:
+    """``kipy.project.Project`` over a :class:`FakeKiCad` (kicad-python 0.8: no set_net_classes)."""
+
+    def __init__(self, kicad: FakeKiCad, path: str = "/work/rf-board", name: str = "rf-board"):
+        self._kicad = kicad
+        self.path = path
+        self.name = name
+
+    def get_net_classes(self):
+        from kipy.project_types import NetClass
+        from kipy.proto.common.types import project_settings_pb2
+
+        out = []
+        for proto in self._kicad.classes.values():
+            copy = project_settings_pb2.NetClass()
+            copy.CopyFrom(proto)
+            out.append(NetClass(copy))
+        return out
+
+
+class FakeProject09(FakeProject):
+    """kicad-python 0.9's ``Project.set_net_classes`` over the same channel."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.set_calls = []
+
+    def set_net_classes(self, net_classes, merge_mode=None):
+        from google.protobuf.empty_pb2 import Empty
+        from kipy.proto.common.commands import project_commands_pb2
+
+        self.set_calls.append((list(net_classes), merge_mode))
+        command = project_commands_pb2.SetNetClasses()
+        command.merge_mode = merge_mode
+        command.net_classes.extend([nc.proto for nc in net_classes])
+        self._kicad.send(command, Empty)
+
+
+def sample_classes():
+    """Four classes as a real project reports them, with fields the plugin must not touch."""
+    default = netclass_proto(
+        "Default", track=150000, diff_width=178000, diff_gap=250000, clearance=130000,
+        via_diameter=450000, via_drill=300000,
+    )
+    default.priority = 2147483647
+    default.board.diff_pair_via_gap.value_nm = 250000
+    default.schematic.wire_width.value_nm = 1524
+    default.schematic.bus_width.value_nm = 3048
+    high = netclass_proto(
+        "HighSpeed", track=200000, diff_width=130000, diff_gap=250000, clearance=200000,
+    )
+    high.priority = 0
+    high.board.color.r = 1.0
+    high.board.color.b = 1.0
+    high.board.color.a = 1.0
+    high.schematic.wire_width.value_nm = 1524
+    usb = netclass_proto(
+        "USB", track=147000, diff_width=140000, diff_gap=154000, clearance=200000,
+    )
+    usb.priority = 1
+    power = netclass_proto("Power", track=500000, clearance=250000)
+    power.priority = 2
+    return [default, high, usb, power]
+
+
+# ── The services main.py hands the presentation layer ────────────────────────
+
+
+class FakeServices:
+    """``main.Services`` over a :class:`FakeClient`, with every file under *tmp_path*."""
+
+    def __init__(self, tmp_path, *, client=None, key=KEY, project=None, grid=0.001,
+                 options=None):
+        from rftools_kicad.cache import ResultCache
+        from rftools_kicad.mapping import Options
+        from rftools_kicad.settings import KEY_URL, SOURCE_SETTINGS, Settings
+
+        self.version = "0.1.0"
+        self.settings = Settings(
+            api_key=key, key_source=SOURCE_SETTINGS if key else None, options={},
+            path=tmp_path / "config" / "rftools-kicad" / "settings.json",
+        )
+        self.options = options or Options()
+        self.grid = grid
+        self.cache = ResultCache(tmp_path / "cache" / "results.json")
+        self.key_url = KEY_URL
+        self.history_path = tmp_path / "config" / "rftools-kicad" / "history.json"
+        self.client = client or FakeClient()
+        self.project = project
+        self.kicad = self.board = None
+
+    @property
+    def has_key(self):
+        return bool(self.settings.api_key)
+
+    def api(self):
+        from rftools_kicad.api import Api
+
+        if not self.settings.api_key:
+            raise RuntimeError("No API key is set. Get a free key at " + self.key_url)
+        return Api(self.client, self.cache, key_id=self.settings.key_id, sleep=lambda s: None)
+
+    def save_key(self, key):
+        from rftools_kicad.settings import load_settings, save_key
+
+        usage = save_key(key, lambda k: self.client, path=self.settings.path)
+        self.settings = load_settings(self.settings.path, environ={})
+        return usage

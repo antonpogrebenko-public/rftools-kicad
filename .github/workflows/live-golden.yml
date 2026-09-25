@@ -1,0 +1,56 @@
+name: Live golden cases
+
+# G1–G3 against the production rftools.io API through the real SDK
+# (scripts/live_golden.py): weekly, before each release is published
+# (release.yml calls this workflow), and on demand.
+#
+# Cost: at most 3 metered API calls per run — G1 one solve, G2 one forward
+# call, G3 one forward call. Reading the allowance first is free. Nothing is
+# cached between runs.
+#
+# Needs the repository secret RFTOOLS_API_KEY: a free key created through
+# https://rftools.io/dashboard/?newKey=1&client=kicad-plugin (task 5.4, with
+# the founder's approval). Without it the job reports a notice and passes.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays, 06:17 UTC
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      RFTOOLS_API_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: G1–G3 against production
+    runs-on: ubuntu-latest
+    env:
+      RFTOOLS_API_KEY: ${{ secrets.RFTOOLS_API_KEY }}
+    steps:
+      - name: Is the key set?
+        id: key
+        run: |
+          if [ -z "$RFTOOLS_API_KEY" ]; then
+            echo "::notice title=Live golden check skipped::The RFTOOLS_API_KEY secret is not set, so G1–G3 were not run against the production API. Add it under Settings > Secrets and variables > Actions to run them."
+            echo "set=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "set=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.set == 'true'
+      - uses: actions/setup-python@v5
+        if: steps.key.outputs.set == 'true'
+        with:
+          python-version: "3.12"
+      - name: Install the SDK the plugin declares
+        if: steps.key.outputs.set == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install "$(grep -i '^rftools-io' plugins/requirements.txt)"
+      - name: G1 solve, G2 and G3 forward (3 calls at most)
+        if: steps.key.outputs.set == 'true'
+        run: python scripts/live_golden.py

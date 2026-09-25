@@ -225,13 +225,12 @@ class Services:
 def present(model: Any, netclasses: List[Any], services: Services) -> int:
     """The presentation layer's interface: show the model, run what the user selects.
 
-    TODO(tasks 4.1, 4.2): replaced by ``dialog.present`` (wxPython) or, where wx
-    cannot load, ``report.present`` (an HTML report, writes disabled); see
-    :func:`presenter`. Both receive plain data: a ``stackup.LayerModel``, a list
-    of ``mapping.NetClassValues`` and :class:`Services`; they plan runs with
-    ``budget.plan_run``/``budget.estimate`` and run them with ``Api.run`` and
-    ``solve.run_target``. This stub only prints the proposed model, spending no
-    API call.
+    The real presentation layers are ``dialog.present`` (wxPython) and, where
+    wx cannot load, ``report.present`` (an HTML report with no write control);
+    see :func:`presenter`. Both receive plain data: a ``stackup.LayerModel``, a
+    list of ``mapping.NetClassValues`` and :class:`Services`, and both work
+    through ``dialog_logic.DialogState``. This last resort, used only when
+    neither module imports, prints the proposed model and spends no API call.
     """
     lines = ["{} {}".format(TITLE, services.version)]
     planes = ", ".join(model.planes) or "none"
@@ -246,7 +245,7 @@ def present(model: Any, netclasses: List[Any], services: Services) -> int:
             _mm(nc.track_width_nm), _mm(nc.via_diameter_nm), _mm(nc.via_drill_nm),
             _mm(nc.clearance_nm),
         ))
-    lines.append("The results dialog is not built yet; no API call was made.")
+    lines.append("The results dialog could not be loaded; no API call was made.")
     say("\n".join(lines), sys.stdout)
     return 0
 
@@ -258,7 +257,7 @@ def presenter() -> Callable[..., int]:
     for name in ("rftools_kicad.dialog", "rftools_kicad.report"):
         try:
             module = importlib.import_module(name)
-        except ImportError:
+        except Exception:  # wx missing, or failing to load its libraries
             continue
         fn = getattr(module, "present", None)
         if callable(fn):

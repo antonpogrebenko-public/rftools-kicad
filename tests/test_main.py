@@ -163,8 +163,31 @@ def test_the_stub_presenter_prints_the_model_and_calls_nothing(capsys):
     assert "no API call was made" in out
 
 
-def test_the_presenter_falls_back_to_the_stub():
-    assert M.presenter() is M.present  # no dialog or report module in this pass
+def test_the_presenter_is_the_dialog_else_the_report_else_the_stub(monkeypatch):
+    import importlib
+
+    real = importlib.import_module
+    loadable = {"rftools_kicad.dialog", "rftools_kicad.report"}
+
+    def import_module(name, *args):
+        if name in ("rftools_kicad.dialog", "rftools_kicad.report") and name not in loadable:
+            raise ImportError(f"no {name}")
+        if name == "rftools_kicad.dialog":
+            class Dialog:  # wx may be absent where the suite runs
+                @staticmethod
+                def present(*args):
+                    return 0
+            return Dialog
+        return real(name, *args)
+
+    monkeypatch.setattr(importlib, "import_module", import_module)
+    assert M.presenter().__qualname__.endswith("Dialog.present")
+    loadable.discard("rftools_kicad.dialog")  # import wx failed
+    from rftools_kicad import report
+
+    assert M.presenter() is report.present
+    loadable.clear()
+    assert M.presenter() is M.present
 
 
 def test_kicad_without_the_api_enabled_is_a_readable_message(monkeypatch, capsys):
@@ -223,7 +246,12 @@ def test_the_entrypoint_as_kicad_runs_it_fails_gracefully_without_kicad(tmp_path
         "KICAD_API_SOCKET": f"ipc://{tmp_path}/no-kicad.sock",
     })
     env.pop("RFTOOLS_API_KEY", None)
-    env.pop("PYTHONPATH", None)
+    # As on a Linux KiCad without python3-wxgtk4.0: wx does not import, so the
+    # message goes to stderr instead of a modal box nobody would close.
+    no_wx = tmp_path / "no-wx"
+    (no_wx / "wx").mkdir(parents=True)
+    (no_wx / "wx" / "__init__.py").write_text("raise ImportError('no wx here')\n")
+    env["PYTHONPATH"] = str(no_wx)
     result = subprocess.run(
         [sys.executable, str(MAIN)], cwd=str(MAIN.parent.parent), env=env,
         capture_output=True, text=True, timeout=60,
