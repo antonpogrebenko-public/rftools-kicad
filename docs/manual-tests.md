@@ -31,6 +31,20 @@ Not yet run. Record the platform, KiCad version, Python version (KiCad's own, fr
 | Date | Platform | KiCad | Python | Board | Steps passed | Notes |
 |---|---|---|---|---|---|---|
 
+### Run 1 — macOS, KiCad 10.0.6, 2026-09-26
+
+Machine: Apple silicon Mac. KiCad 10.0.6 from the official installer, with the API enabled and the interpreter left as KiCad's bundled Python 3.9.13. The package was installed with Install from File.
+
+What happened:
+- **Environment:** it built with the bundled 3.9.13 at 12:06, holding `kicad-python` 0.8.0 plus `protobuf` and `pynng`. `certifi` was already satisfied from the user's own Python 3.9 site-packages.
+- **Toolbar button:** absent from the PCB editor that was already open. It appeared after quitting KiCad and reopening it. KiCad 10.0.6 adds a plugin's button only to a PCB editor opened after the plugin is ready. The README now says so.
+- **"Get a free key":** opened nothing, because Python's `webbrowser` goes through AppleScript and fails silently in a process KiCad starts. Fixed in `aff9e63` (`browser.open_url`); this run used the key link directly. The fixed button is still to be checked on the next install.
+- **The run:** a key was saved, and one class was run on `F.Cu` with Z₀ target 50 Ω. The board uses KiCad's default two-layer stackup (1.51 mm FR-4, εr 4.5, 35 µm), which is golden case G1. The plugin's result cache shows 2 calls:
+  - the current width, 0.2 mm → 132.82412963196327 Ω;
+  - the solve → **2.784 mm**, reached, 68 evaluations, 50.0001127254694 Ω. Both equal `golden/kicad-golden.json` G1 exactly.
+
+  Both results carry `api@0c02e01f0c4d` and a `validRange` of `inside`. "Values for Board Setup…" listed the proposal, and nothing was written, since KiCad 10.0.6 blocks the write.
+
 ## No write on KiCad 10.0.6
 
 KiCad 10.0.6 corrupts a net class written through the API: the class loses its nets, and the next save hangs or crashes KiCad (spike, 2026-09-25). The plugin must not write there. Run this on KiCad 10.0.6 with a board whose classes hold nets, for example the demo `cm5_minima`.
