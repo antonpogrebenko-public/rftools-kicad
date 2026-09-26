@@ -73,9 +73,9 @@ def present(
     notes, budget_line = run_defaults(state)
     path = write_report(render(state, notes, budget_line), directory)
     if opener is None:
-        import webbrowser
+        from rftools_kicad.browser import open_url
 
-        opener = webbrowser.open
+        opener = open_url
     opener(Path(path).as_uri())
     print(f"{TITLE}: the report is at {path}", file=sys.stderr)
     return 0

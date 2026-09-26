@@ -58,3 +58,9 @@ def service():
     fake = FakeService()
     yield fake
     fake.close()
+
+
+@pytest.fixture(autouse=True)
+def plugin_log_in_tmp(tmp_path, monkeypatch):
+    """configure_logging keeps <cache>/rftools-kicad/plugin.log; never the real one here."""
+    monkeypatch.setenv("RFTOOLS_KICAD_LOG_DIR", str(tmp_path / "plugin-log"))

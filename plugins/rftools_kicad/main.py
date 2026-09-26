@@ -101,9 +101,9 @@ def notify(
     if browser_fallback:
         path = write_message_page(text)
         if opener is None:
-            import webbrowser
+            from rftools_kicad.browser import open_url
 
-            opener = webbrowser.open
+            opener = open_url
         from pathlib import Path
 
         opener(Path(path).as_uri())
@@ -331,8 +331,31 @@ def configure_logging(settings: Any) -> None:
     root = logging.getLogger()
     root.handlers = [h for h in root.handlers if not getattr(h, "_rftools", False)]
     handler._rftools = True  # type: ignore[attr-defined]
+    handler.setLevel(logging.WARNING)
     root.addHandler(handler)
-    root.setLevel(logging.WARNING)
+    root.setLevel(logging.INFO)
+
+    # KiCad keeps a plugin's output only when it fails, so the plugin also keeps
+    # a small log of its own for support: <cache>/rftools-kicad/plugin.log
+    # (RFTOOLS_KICAD_LOG_DIR moves it; the test suite points it at a temp folder).
+    try:
+        import os as _os
+        from logging.handlers import RotatingFileHandler
+        from pathlib import Path as _Path
+
+        from rftools_kicad.settings import cache_dir
+
+        directory = _Path(_os.environ.get("RFTOOLS_KICAD_LOG_DIR") or cache_dir())
+        directory.mkdir(parents=True, exist_ok=True)
+        to_file = RotatingFileHandler(str(directory / "plugin.log"), maxBytes=256_000,
+                                      backupCount=1, encoding="utf-8")
+        to_file.addFilter(RedactingFilter(keys=(settings.api_key,)))
+        to_file.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        to_file.setLevel(logging.INFO)
+        to_file._rftools = True  # type: ignore[attr-defined]
+        root.addHandler(to_file)
+    except Exception:  # noqa: BLE001 — a log file is never worth failing the plugin for
+        pass
 
 
 def main(argv: Optional[List[str]] = None, version_info: Optional[Any] = None) -> int:

@@ -389,9 +389,9 @@ class DialogState:
         url = self.services.key_url
         opener = self._opener
         if opener is None:
-            import webbrowser
+            from rftools_kicad.browser import open_url
 
-            opener = webbrowser.open
+            opener = open_url
         opener(url)
         return url
 

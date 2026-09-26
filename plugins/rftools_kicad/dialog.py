@@ -317,6 +317,25 @@ class MainDialog(wx.Dialog):
 
     # ── The key, the budget and the buttons ──────────────────────────────────
 
+    def on_get_key(self, _event: Any = None) -> None:
+        """Open the key link; when no browser opens, copy it and say where it is."""
+        from rftools_kicad.browser import open_url
+
+        url = self.state.services.key_url
+        if open_url(url, wx_module=wx):
+            return
+        copied = False
+        if wx.TheClipboard.Open():
+            try:
+                copied = bool(wx.TheClipboard.SetData(wx.TextDataObject(url)))
+                wx.TheClipboard.Flush()
+            finally:
+                wx.TheClipboard.Close()
+        how = "It is copied to the clipboard; paste it into your browser." if copied else \
+            "Copy it into your browser."
+        wx.MessageBox(f"Your browser could not be opened from KiCad.\n\n{url}\n\n{how}",
+                      "Get a free key", wx.OK | wx.ICON_INFORMATION, self)
+
     def _build_bottom(self) -> Any:
         panel = wx.Panel(self)
         gap = self.FromDIP(6)
@@ -327,7 +346,7 @@ class MainDialog(wx.Dialog):
         key.Add(self.key_status, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, gap)
         get_key = wx.Button(panel, label="Get a free key")
         get_key.SetToolTip(self.state.services.key_url)
-        get_key.Bind(wx.EVT_BUTTON, lambda e: self.state.open_key_link())
+        get_key.Bind(wx.EVT_BUTTON, self.on_get_key)
         key.Add(get_key, 0, wx.RIGHT, gap)
         self.key_field = wx.TextCtrl(panel, style=wx.TE_PASSWORD,
                                      size=self.FromDIP(wx.Size(260, -1)))

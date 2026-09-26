@@ -158,6 +158,9 @@ It spends calls only if the run fits your remaining allowance. Otherwise it show
 
 ## Troubleshooting
 
+- **The button does not appear right after installing**: KiCad 10.0.6 adds a plugin's button only to a PCB editor opened after the plugin is ready, and the first start spends a minute building its environment. Quit KiCad, reopen it, wait about 20 seconds, then open the PCB editor. The button is at the right end of the top toolbar.
+- **"Get a free key" opens nothing**: the plugin tries KiCad's own browser call, then the system's. When neither works it copies the link to the clipboard and shows it: open https://rftools.io/dashboard/?newKey=1&client=kicad-plugin yourself, copy the key and paste it into the dialog.
+- **Anything else**: the plugin keeps a small log, with keys cut to their public id, at `~/Library/Caches/rftools-kicad/plugin.log` on macOS, `%LOCALAPPDATA%\rftools-kicad\plugin.log` on Windows and `~/.cache/rftools-kicad/plugin.log` on Linux. Send it with a report.
 - **"needs Python 3.9 or later"**: KiCad's plugin interpreter was changed to an older Python. Set it back to KiCad's own as described under [Requirements](#requirements), rebuild the plugin's environment and restart KiCad.
 - **On macOS, the plugin never appears after you set another Python as the interpreter**: that Python cannot start under KiCad (see [Requirements](#requirements)). Click **Detect Automatically** in Preferences › Plugins, choose **Recreate Plugin Environment**, and restart KiCad.
 - **The plugin still runs on the old Python after you changed the interpreter**: KiCad 10.0.6 keeps the old environment. Right-click the plugin in Preferences › Plugins › Action Plugins and choose **Recreate Plugin Environment**, or delete the environment folder listed under [Requirements](#requirements). Then restart KiCad.
