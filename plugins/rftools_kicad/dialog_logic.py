@@ -9,10 +9,11 @@ holds and tests without a display:
     ``LayerModel.with_planes``), the structure computed on it (the model's own
     ``describe()``, which says when plies were combined) and its problems;
 (b) the net-class form: per class, whether it is selected, a single-ended and
-    a differential target, a coplanar gap, a current for IPC-2152, the layer it
-    is routed on (a class is board-wide and a width is per layer: the width
-    written is the routing layer's), other layers to compute on, and a via
-    check; plus the solder-mask option and the manufacturing grid;
+    a differential target, a coplanar gap, a current for the IPC-2152
+    Figure 5-1 width, the layer it is routed on (a class is board-wide and a
+    width is per layer: the width written is the routing layer's), other
+    layers to compute on, and a via check; plus the solder-mask option and the
+    manufacturing grid;
 (c) the run budget (``budget.plan_run``, counted before any calculation
     request; the allowance comes from the usage endpoint, which is never
     metered) and the key flow (``settings``: the key link, a pasted key checked
@@ -632,10 +633,10 @@ class DialogState:
         """``({class: {field: nm}}, notes)`` from the results, for the selected classes.
 
         Track width: the routing layer's width for the single-ended target;
-        without a target, the IPC-2152 width for the class's current (rounded
-        up to the grid) when the class is narrower. Differential-pair gap: the
-        routing layer's gap for the differential target, at the class's pair
-        width, which is kept.
+        without a target, the IPC-2152 Fig. 5-1 width for the class's current
+        (rounded up to the grid) when the class is narrower. Differential-pair
+        gap: the routing layer's gap for the differential target, at the
+        class's pair width, which is kept.
         """
         if self.results_stale:
             return {}, ["The layer model changed after the run; run again first."]
@@ -667,14 +668,14 @@ class DialogState:
                     if ipc_nm > fields[N.TRACK_WIDTH]:
                         notes.append(
                             f"{nc.name}: the width for the impedance target is narrower than "
-                            f"the IPC-2152 width for {_num(amps)} A ({N.nm_text(ipc_nm)}); "
-                            "the impedance width is proposed."
+                            f"the IPC-2152 Fig. 5-1 width for {_num(amps)} A "
+                            f"({N.nm_text(ipc_nm)}); the impedance width is proposed."
                         )
                 elif nc.track_width_nm is None or ipc_nm > nc.track_width_nm:
                     fields[N.TRACK_WIDTH] = ipc_nm
                     notes.append(
-                        f"{nc.name}: track width is the IPC-2152 width for {_num(amps)} A "
-                        f"on {form.layer}, rounded up to the grid."
+                        f"{nc.name}: track width is the IPC-2152 Fig. 5-1 width for "
+                        f"{_num(amps)} A on {form.layer}, rounded up to the grid."
                     )
             if gap is not None and gap.ok:
                 fields[N.DIFF_PAIR_GAP] = N.mm_to_nm(gap.suggested_mm)
@@ -809,7 +810,8 @@ def figure_label(item: PlannedItem) -> str:
         return f"Gap for {target} Ω differential" if target else "Gap for the target"
     if item.figure == FIGURE_CURRENT:
         amps = c.input_dict.get("current") if c is not None else None
-        return f"IPC-2152 width for {_num(amps)} A" if amps is not None else "IPC-2152 width"
+        return (f"IPC-2152 Fig. 5-1 width for {_num(amps)} A" if amps is not None
+                else "IPC-2152 Fig. 5-1 width")
     if item.figure == FIGURE_VIA:
         return "Via Z, C, L and current"
     return item.figure

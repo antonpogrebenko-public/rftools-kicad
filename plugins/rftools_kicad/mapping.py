@@ -48,7 +48,7 @@ PRIMARY_OUTPUT = {
     PAIR_OUTER: "zdiff",
     PAIR_INNER_SYMMETRIC: "diffImpedance",
     PAIR_INNER_ASYMMETRIC: "diffImpedance",
-    CURRENT: "width2152mm",
+    CURRENT: "width2152mm",  # IPC-2152 Figure 5-1, the conservative chart (design Decision 11)
     VIA: "impedance",
 }
 
@@ -344,11 +344,24 @@ def differential(model: LayerModel, layer: str, width_mm: float, gap_mm: float) 
 def trace_current(
     model: LayerModel, layer: str, current_a: float, options: Options = DEFAULT_OPTIONS
 ) -> Computation:
-    """IPC-2152 width for *current_a* on *layer* (``trace-width-current``).
+    """IPC-2152 Figure 5-1 width for *current_a* on *layer* (``trace-width-current``).
+
+    :data:`PRIMARY_OUTPUT` reads ``width2152mm``: Figure 5-1, the chart IPC-2152
+    recommends for internal and external conductors in all environments when
+    nothing else about the board is known. It is the conservative width, not
+    IPC-2221's chart scaled by 0.75 or 0.85 (no reading of IPC-2152 supports
+    that relation, and it is narrower than every IPC-2152 reading at 2 A and
+    above). A board-specific width, from IPC-2152's detailed method (the
+    board's thickness and a plane's distance), is a planned follow-up and is
+    not computed yet.
 
     ``copperWeight`` is the layer's copper in µm / 35; the calculator states
     0.5–4 oz, and a layer outside that is flagged in ``out_of_range``.
     ``isExternal`` is 1 on an outer layer. No reference plane is needed.
+    ``traceWidth`` (the drawn width the calculator's resistance, voltage-drop
+    and power outputs are for) stays at the calculator's own default: this
+    call proposes a width for *current_a* rather than checking one that is
+    already drawn, so the plugin has no drawn width of its own to send.
     """
     copper = model.copper_layer(layer)
     if copper.thickness_nm is None:
@@ -359,7 +372,7 @@ def trace_current(
         "tempRise": options.temp_rise_c,
         "isExternal": 1 if copper.outer else 0,
     }
-    defaults = []
+    defaults = ["traceWidth"]
     if options.trace_length_mm is None:
         defaults.append("traceLength")
     else:
@@ -380,7 +393,8 @@ def via(
     ``padDiameter`` the pad: KiCad's net-class "via diameter" is the pad. The
     board thickness is the stackup's total, εr the thickness-weighted mean over
     every dielectric ply, and the plating the calculator's default unless the
-    user sets one. ``signalLayer`` does not change any output; its default is sent.
+    user sets one. (``signalLayer``, which changed no output, was retired from
+    the calculator upstream; this mapping no longer sends it.)
     """
     if model.board_thickness_nm is None:
         raise MappingError(
@@ -397,7 +411,7 @@ def via(
         "boardThickness": model.board_thickness_nm / NM_PER_MM,
         "dielectricConstant": model.board_epsilon_r,
     }
-    defaults = ["signalLayer"]
+    defaults = []
     if options.via_plating_um is None:
         defaults.append("copperThickness")
     else:

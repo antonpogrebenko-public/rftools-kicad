@@ -312,7 +312,7 @@ def test_a_run_shows_current_suggested_achieved_formula_range_engine_and_cache(t
     assert width.label == "Width for 50 Ω" and width.current == "0.2 mm"
     assert width.suggested == "0.284 mm" and width.achieved == "50.00 Ω"
     assert width.suggested_mm == 0.284 and width.status == D.OK
-    assert current.label == "IPC-2152 width for 2 A"
+    assert current.label == "IPC-2152 Fig. 5-1 width for 2 A"
     assert current.suggested == "0.5895 mm" and current.current == "0.2 mm"
     assert via.current == "0.6 / 0.3 mm (pad / drill)"
     assert via.achieved == "Z 48.21 Ω, C 0.412 pF, L 1.02 nH, I 3.1 A"
@@ -478,7 +478,7 @@ def test_without_a_target_a_current_proposes_the_ipc_width_rounded_up(tmp_path):
     proposals, notes = state.proposals()
     # 0.58948... mm rounded up to the 0.001 mm grid, and wider than 0.5 mm.
     assert proposals == {"Power": {N.TRACK_WIDTH: 590000}}
-    assert any("IPC-2152 width for 3 A on F.Cu, rounded up" in n for n in notes)
+    assert any("IPC-2152 Fig. 5-1 width for 3 A on F.Cu, rounded up" in n for n in notes)
 
 
 def test_an_impedance_width_narrower_than_the_current_needs_is_flagged(tmp_path):
@@ -487,7 +487,7 @@ def test_an_impedance_width_narrower_than_the_current_needs_is_flagged(tmp_path)
     state.run()
     proposals, notes = state.proposals()
     assert proposals == {"HighSpeed": {N.TRACK_WIDTH: 284000}}
-    assert any("narrower than the IPC-2152 width for 3 A (0.59 mm)" in n for n in notes)
+    assert any("narrower than the IPC-2152 Fig. 5-1 width for 3 A (0.59 mm)" in n for n in notes)
 
 
 def test_changing_the_model_after_a_run_blocks_the_write_until_run_again(tmp_path):

@@ -6,8 +6,8 @@ its via — into the list of computations a run makes (design Decision 3):
 
     per layer   a solve for the width (or a pair's gap) that reaches the target,
                 and a forward call for the class's current width (or width and gap)
-    per class   one IPC-2152 width for the current, on the layer the user names
-                (else the first), and one via check
+    per class   one IPC-2152 Figure 5-1 width for the current, on the layer the
+                user names (else the first), and one via check
 
 A class given a coplanar gap is computed as grounded coplanar waveguide
 (``coplanar-waveguide``, structure 1) on the outer layers, where the plane
@@ -49,7 +49,7 @@ FIGURE_IMPEDANCE = "impedance"  # forward: the class's track width
 FIGURE_WIDTH_FOR_TARGET = "width-for-target"  # solve: traceWidth
 FIGURE_DIFF_IMPEDANCE = "differential-impedance"  # forward: the class's pair width and gap
 FIGURE_GAP_FOR_TARGET = "gap-for-target"  # solve: traceSpacing
-FIGURE_CURRENT = "current-width"  # forward: IPC-2152 width
+FIGURE_CURRENT = "current-width"  # forward: IPC-2152 Figure 5-1 width
 FIGURE_VIA = "via"  # forward: via Z, C, L, current
 
 
@@ -69,7 +69,9 @@ class ClassRequest:
     #: Differential target, Ω: a gap per layer at the class's pair width
     #: (implies ``differential``).
     diff_target: float | None = None
-    #: Current, A: one IPC-2152 width, on ``current_layer`` (else the first layer).
+    #: Current, A: one IPC-2152 Figure 5-1 width, on ``current_layer`` (else the
+    #: first layer). A board-specific width (IPC-2152's detailed method, using
+    #: the board's thickness and a plane's distance) is a planned follow-up.
     current_a: float | None = None
     current_layer: str | None = None
     #: Check the class's via.

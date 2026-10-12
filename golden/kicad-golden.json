@@ -217,7 +217,7 @@
     },
     {
       "id": "G3",
-      "description": "IPC-2152 width for 2 A with a 10 °C rise on F.Cu of G1's board: an outer layer (isExternal 1) of 35 µm copper, copperWeight 35 / 35 = 1 oz. traceLength is the calculator's default.",
+      "description": "IPC-2152 width (Figure 5-1) for 2 A with a 10 °C rise on F.Cu of G1's board: an outer layer (isExternal 1) of 35 µm copper, copperWeight 35 / 35 = 1 oz. traceLength and traceWidth (the drawn width the resistance is computed for) are the calculator's defaults.",
       "stackup": {
         "boardThicknessNm": 1600000,
         "layers": [
@@ -266,14 +266,16 @@
         "copperWeight": 1,
         "tempRise": 10,
         "traceLength": 100,
-        "isExternal": 1
+        "isExternal": 1,
+        "traceWidth": 0.5
       },
       "outputs": {
-        "width2221mm": 0.7859736537100402,
-        "width2152mm": 0.5894802402825302,
-        "resistance": 0.06659500093293261,
-        "voltageDrop": 0.13319000186586522,
-        "powerDiss": 0.26638000373173043
+        "width2221mm": 0.7814374629086279,
+        "width2152mm": 2.0328625490354195,
+        "resistance": 0.10433004926108375,
+        "voltageDrop": 0.2086600985221675,
+        "powerDiss": 0.417320197044335,
+        "inChartRange": 1
       }
     }
   ]

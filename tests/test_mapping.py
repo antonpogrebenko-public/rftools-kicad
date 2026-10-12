@@ -136,6 +136,7 @@ def test_current_on_an_outer_layer():
     assert c.slug == "trace-width-current" and c.output == "width2152mm"
     assert c.input_dict == {
         "current": 2, "copperWeight": 1.0, "tempRise": 10.0, "traceLength": 100, "isExternal": 1,
+        "traceWidth": 0.5,
     }
     assert c.out_of_range == ()
 
@@ -145,6 +146,7 @@ def test_current_on_an_inner_half_ounce_layer_with_options():
     c = M.trace_current(layer_model(six_layer()), "In3.Cu", 1.5, options)
     assert c.input_dict == {
         "current": 1.5, "copperWeight": 0.5, "tempRise": 20, "traceLength": 50, "isExternal": 0,
+        "traceWidth": 0.5,
     }
 
 
@@ -181,7 +183,6 @@ def test_via_from_a_net_class_drill_is_via_diameter_and_pad_is_pad_diameter():
         "boardThickness": 1.6,
         "dielectricConstant": er((200000, 4.4), (1040000, 4.6), (200000, 4.4)),
         "copperThickness": 25,  # plating: the calculator's default
-        "signalLayer": 0,
     }
 
 

@@ -5,7 +5,7 @@ A KiCad 10 plugin that reads the open board's stackup and net classes and works 
 - single-ended impedance: microstrip on outer layers, stripline between planes on inner layers, grounded coplanar waveguide;
 - differential impedance of edge-coupled pairs;
 - the track width that reaches a target impedance, or the pair gap that reaches a target differential impedance;
-- the IPC-2152 track width for a current;
+- the IPC-2152 Fig. 5-1 track width for a current — the chart IPC-2152 recommends when nothing else about the board is known, not IPC-2221's chart scaled by a factor. A board-specific width, narrowed for the board's thickness and a copper plane under the trace, is a planned follow-up and is not computed yet;
 - via impedance, capacitance, inductance and current capacity.
 
 Each number is the one the rftools.io web calculators give for the same inputs. Each is shown with its formula reference, whether its inputs are inside the calculator's valid range, and the engine version that computed it. If you ask, the plugin writes the suggested widths and gaps into your net classes. It shows you every change first, and each write can be undone. On KiCad 10.0.6 and earlier it lists the values for you to enter by hand instead (see [Writing widths to net classes](#writing-widths-to-net-classes)).
@@ -71,14 +71,14 @@ The dialog has three tabs.
    - a single-ended target (Ω);
    - a differential target (Ω);
    - a coplanar gap (mm);
-   - a current (A) for IPC-2152;
+   - a current (A) for the IPC-2152 Fig. 5-1 width;
    - the layer it is routed on, plus any other layers to compute it on;
    - whether to check its via.
 
    A net class covers the whole board, but an impedance width depends on the layer. The width written to a class is the one for the layer it is routed on. You can also compute outer layers under their solder mask and set the manufacturing grid (0.001 mm by default).
 3. **Results.** After you click **Run**, each figure shows:
    - the class's current value;
-   - the suggested value (a width or gap on the grid, or the IPC-2152 width);
+   - the suggested value (a width or gap on the grid, or the IPC-2152 Fig. 5-1 width);
    - the value the API computed at it;
    - the formula reference;
    - whether the inputs are inside the calculator's range, and the bound crossed if not;
@@ -103,7 +103,7 @@ Each figure is one API call:
 
 - each impedance at a class's current width;
 - each width or gap for a target (one solve call, not a search);
-- each IPC-2152 width;
+- each IPC-2152 Fig. 5-1 width;
 - each via check.
 
 The same figure asked for twice, such as the two outer layers of a symmetric board, is sent once. Results are kept for seven days in a local cache (`~/Library/Caches/rftools-kicad/`, `~/.cache/rftools-kicad/` or `%LOCALAPPDATA%\rftools-kicad\`), so running the same thing again costs nothing. Checking the allowance costs nothing either.
@@ -126,7 +126,7 @@ Nothing in the board or the project changes unless you ask:
    - If KiCad applied nothing, or put other values in the three fields, the plugin says the write was not applied.
    - If a written class no longer lists itself as its only constituent, holds a different number of nets, or changed in any other setting, or if another class changed, the plugin says: **"The write did not apply correctly. Do not save the board; close it without saving and reopen it."**
 
-The width proposed for a class is the width for its single-ended target on its routing layer. Without a target, it is the IPC-2152 width for its current, rounded up to the grid, but only if the class is narrower than that. The gap proposed is the gap for its differential target, at the class's current pair width.
+The width proposed for a class is the width for its single-ended target on its routing layer. Without a target, it is the IPC-2152 Fig. 5-1 width for its current, rounded up to the grid, but only if the class is narrower than that. Fig. 5-1 is the chart IPC-2152 recommends when nothing else about the board is known; it does not yet use the board's thickness or a plane's distance to narrow the width further — that board-specific width is a planned follow-up. The gap proposed is the gap for its differential target, at the class's current pair width.
 
 **Restore previous values…** writes the recorded values back the same way and records that too. Each Restore undoes one write, newest first. The history is kept per project, in `history.json` beside the settings file.
 
