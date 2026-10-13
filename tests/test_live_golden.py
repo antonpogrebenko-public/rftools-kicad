@@ -79,7 +79,7 @@ def test_the_golden_cases_pass_with_exactly_three_metered_calls():
 def test_g1_must_return_the_golden_grid_width():
     results, _ = L.run(production(g1_value=2.785), golden())
     g1 = results[0]
-    assert not g1.ok and "not the golden grid width 2.784" in g1.problems[0]
+    assert not g1.ok and "not the golden grid width 2.781" in g1.problems[0]
 
 
 def test_a_value_beyond_one_part_in_a_million_fails_and_is_named():

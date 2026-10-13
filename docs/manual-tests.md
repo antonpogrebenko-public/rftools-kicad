@@ -42,6 +42,7 @@ What happened:
 - **The run:** a key was saved, and one class was run on `F.Cu` with Z₀ target 50 Ω. The board uses KiCad's default two-layer stackup (1.51 mm FR-4, εr 4.5, 35 µm), which is golden case G1. The plugin's result cache shows 2 calls:
   - the current width, 0.2 mm → 132.82412963196327 Ω;
   - the solve → **2.784 mm**, reached, 68 evaluations, 50.0001127254694 Ω. Both equal `golden/kicad-golden.json` G1 exactly.
+  - **Since 2026-10-13** the golden G1 width is **2.781 mm** (unrounded 2.7807205259490893): rftools.io's microstrip engine took η₀/2π for the rounded 60 (fix-calculator-formulas-followup), which lowers every microstrip impedance 0.069 %. The figures above are this run's, against the API of that day.
 
   Both results carry `api@0c02e01f0c4d` and a `validRange` of `inside`. "Values for Board Setup…" listed the proposal, and nothing was written, since KiCad 10.0.6 blocks the write.
 

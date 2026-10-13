@@ -50,7 +50,7 @@
       "layer": "F.Cu",
       "calculator": "microstrip-impedance",
       "forwardInputs": {
-        "traceWidth": 2.784,
+        "traceWidth": 2.781,
         "substrateHeight": 1.51,
         "dielectricConstant": 4.5,
         "copperThickness": 35
@@ -62,13 +62,13 @@
           "value": 50
         },
         "grid": 0.001,
-        "unrounded": 2.784010722886311,
-        "value": 2.784
+        "unrounded": 2.7807205259490893,
+        "value": 2.781
       },
       "outputs": {
-        "impedance": 50.0001127254694,
-        "effectiveDielectric": 3.394742006654256,
-        "propagationDelay": 6.145860301041207
+        "impedance": 49.99705984469245,
+        "effectiveDielectric": 3.3944336801230706,
+        "propagationDelay": 6.145581196647901
       }
     },
     {
@@ -207,9 +207,9 @@
         "dielectricConst": 4.4578125
       },
       "outputs": {
-        "impedance": 56.20361775055373,
-        "centredImpedance": 61.381997764246236,
-        "offsetPenalty": -8.43631716514252,
+        "impedance": 56.20361778856675,
+        "centredImpedance": 61.3819978057715,
+        "offsetPenalty": -8.436317165157247,
         "propagationDelay": 7.042716328236941,
         "planeSpacing": 0.6575,
         "asymmetryRatio": 2.3684210526315788

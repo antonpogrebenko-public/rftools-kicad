@@ -56,7 +56,7 @@ def test_g1_shows_the_golden_grid_width_after_exactly_one_call(tmp_path):
 
     result = run_target(api, request)
 
-    assert result.value == case["solve"]["value"] == 2.784
+    assert result.value == case["solve"]["value"] == 2.781
     assert result.unrounded == case["solve"]["unrounded"]
     assert result.reached and result.nearest is None
     assert result.achieved == case["outputs"]["impedance"]
@@ -83,7 +83,7 @@ def test_a_cached_target_makes_no_call(tmp_path):
     request = target_request(single_ended(model, "F.Cu", 0.3), 50)
     run_target(A.Api(client, ResultCache(path)), request)
     again = run_target(A.Api(client, ResultCache(path)), request)
-    assert again.cached and again.value == 2.784
+    assert again.cached and again.value == 2.781
     assert len(client.metered) == 1
 
 

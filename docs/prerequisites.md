@@ -24,6 +24,7 @@ The frontend's `/docs/api` section, changelog entry and `/docs/python` went live
   - **Result:** 200 with `value` 2.784 (the golden grid width), `unrounded` 2.784010722886359, `reached` true and `evaluations` 68.
   - **Forward result:** impedance 50.0001127254694, equal to the golden web output.
   - **Provenance:** nine members, `version` `api@0c02e01f0c4d`, `validRange` `inside`, `inputs.traceWidth` 2.784.
+  - **Since 2026-10-13** the golden G1 width is **2.781 mm** (unrounded 2.7807205259490893): rftools.io's microstrip engine took η₀/2π for the rounded 60 (fix-calculator-formulas-followup), which lowers every microstrip impedance 0.069 %. The figures above are this run's, against the API of that day.
   - **Usage headers:** `X-Usage-Used` rose from 1 to 2.
 - **A refusal** (`solveFor` set to the output `impedance`) answered 400 naming `solveFor`, and usage stayed at 2.
 
