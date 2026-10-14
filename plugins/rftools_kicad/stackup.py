@@ -34,6 +34,9 @@ Two steps, with a plain dict between them:
 
 Which copper layers are reference planes is a proposal the user can change:
 ``layer_model(stackup, planes=[...])`` or :meth:`LayerModel.with_planes`.
+:meth:`LayerModel.nearest_plane` gives a trace layer's nearest plane for the
+thermal model of a current's width, and credits none until the planes are
+known (from the layers' roles or the user's choice).
 A layer missing a thickness or a permittivity is named in
 :attr:`LayerModel.problems`, and every copper layer that depends on it is not
 modelled (spec: "A stackup the plugin cannot model").
@@ -213,6 +216,21 @@ class Structure:
 
 
 @dataclass(frozen=True)
+class NearestPlane:
+    """The reference plane nearest a trace layer, for a trace's temperature rise.
+
+    ``height_nm`` is its :class:`Structure` height (the dielectric between, plus
+    the copper of any signal layer between) and ``copper_thickness_nm`` the
+    plane's own copper (None when the stackup does not state it).
+    """
+
+    layer: str
+    plane: str
+    height_nm: int
+    copper_thickness_nm: int | None
+
+
+@dataclass(frozen=True)
 class LayerModel:
     stackup: Mapping[str, Any]
     board_thickness_nm: int | None
@@ -246,6 +264,31 @@ class LayerModel:
             if mask.side == side:
                 return mask
         return None
+
+    def nearest_plane(self, layer: str) -> NearestPlane | None:
+        """The plane nearest *layer*'s traces, or None (trace-thermal-model, Decision 14).
+
+        It is the plane of the layer's :class:`Structure`: a microstrip's one
+        plane, inward; a stripline's nearer plane, the one below when the two are
+        equally near (the golden generator's order). None when the layer has no
+        structure, and None under the adjacency proposal: there KiCad has said
+        nothing about which layers are planes, every copper layer is proposed
+        as one for impedance, and a signal layer is not solid copper, so
+        crediting it would understate a trace's temperature rise. Planes typed
+        ``power`` or ``mixed``, or chosen by the user, are credited.
+        """
+        if self.plane_source == PLANES_FROM_ADJACENCY:
+            return None
+        s = self.structure(layer)
+        if s is None:
+            return None
+        if s.kind == "microstrip":
+            plane, height = s.reference, s.substrate_height_nm
+        elif s.height_above_nm < s.height_below_nm:
+            plane, height = s.plane_above, s.height_above_nm
+        else:
+            plane, height = s.plane_below, s.height_below_nm
+        return NearestPlane(layer, plane, height, self.copper_layer(plane).thickness_nm)
 
     def problems_for(self, layer: str) -> list[Problem]:
         return [p for p in self.problems if layer in p.skipped or p.layer == layer]

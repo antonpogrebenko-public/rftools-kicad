@@ -5,7 +5,9 @@ A KiCad 10 plugin that reads the open board's stackup and net classes and works 
 - single-ended impedance: microstrip on outer layers, stripline between planes on inner layers, grounded coplanar waveguide;
 - differential impedance of edge-coupled pairs;
 - the track width that reaches a target impedance, or the pair gap that reaches a target differential impedance;
-- the IPC-2152 Fig. 5-1 track width for a current — the chart IPC-2152 recommends when nothing else about the board is known, not IPC-2221's chart scaled by a factor. A board-specific width, narrowed for the board's thickness and a copper plane under the trace, is a planned follow-up and is not computed yet;
+- two track widths for a current, each named by its method:
+  - the **rftools thermal model (board-specific)** width, for the board's thickness and the copper plane nearest the trace. It is rftools' own steady-state model, checked against published results, and is not IPC-2152;
+  - the **IPC-2152 Fig. 5-1** width, the chart IPC-2152 recommends when nothing else about the board is known: the conservative width for any conductor, not IPC-2221's chart scaled by a factor;
 - via impedance, capacitance, inductance and current capacity.
 
 Each number is the one the rftools.io web calculators give for the same inputs. Each is shown with its formula reference, whether its inputs are inside the calculator's valid range, and the engine version that computed it. If you ask, the plugin writes the suggested widths and gaps into your net classes. It shows you every change first, and each write can be undone. On KiCad 10.0.6 and earlier it lists the values for you to enter by hand instead (see [Writing widths to net classes](#writing-widths-to-net-classes)).
@@ -66,19 +68,19 @@ The `RFTOOLS_API_KEY` environment variable, if set, is used instead of the saved
 
 The dialog has three tabs.
 
-1. **Layer model.** Review the structure the plugin proposes for each copper layer: microstrip on the outer layers, stripline between planes on the inner layers, with the heights and εr it read. Where two or more dielectric plies lie between a trace and its plane, it adds their heights and takes their thickness-weighted εr, and says so. KiCad does not say which copper layers are planes, so at first every copper layer is treated as a plane for its neighbours. Untick the signal layers to set the planes yourself. The model is worked out again at once. Nothing is computed until you run.
+1. **Layer model.** Review the structure the plugin proposes for each copper layer: microstrip on the outer layers, stripline between planes on the inner layers, with the heights and εr it read. Where two or more dielectric plies lie between a trace and its plane, it adds their heights and takes their thickness-weighted εr, and says so. KiCad does not say which copper layers are planes, so at first every copper layer is treated as a plane for its neighbours. Untick the signal layers to set the planes yourself. Until you do, the board-specific width for a current credits no plane. The model is worked out again at once. Nothing is computed until you run.
 2. **Net classes.** Tick the classes to compute. For each class you can enter:
    - a single-ended target (Ω);
    - a differential target (Ω);
    - a coplanar gap (mm);
-   - a current (A) for the IPC-2152 Fig. 5-1 width;
+   - a current (A), for the board-specific and IPC-2152 Fig. 5-1 widths;
    - the layer it is routed on, plus any other layers to compute it on;
    - whether to check its via.
 
    A net class covers the whole board, but an impedance width depends on the layer. The width written to a class is the one for the layer it is routed on. You can also compute outer layers under their solder mask and set the manufacturing grid (0.001 mm by default).
 3. **Results.** After you click **Run**, each figure shows:
    - the class's current value;
-   - the suggested value (a width or gap on the grid, or the IPC-2152 Fig. 5-1 width);
+   - the suggested value (a width or gap on the grid, or the width for a current, with its method named; the row's note gives both widths for a current, the board it was computed for and why the suggested one was chosen);
    - the value the API computed at it;
    - the formula reference;
    - whether the inputs are inside the calculator's range, and the bound crossed if not;
@@ -103,7 +105,7 @@ Each figure is one API call:
 
 - each impedance at a class's current width;
 - each width or gap for a target (one solve call, not a search);
-- each IPC-2152 Fig. 5-1 width;
+- each current's widths (one call returns both);
 - each via check.
 
 The same figure asked for twice, such as the two outer layers of a symmetric board, is sent once. Results are kept for seven days in a local cache (`~/Library/Caches/rftools-kicad/`, `~/.cache/rftools-kicad/` or `%LOCALAPPDATA%\rftools-kicad\`), so running the same thing again costs nothing. Checking the allowance costs nothing either.
@@ -112,7 +114,7 @@ Before each run, the dialog states the most calls the run will use and how many 
 
 ## What is sent to rftools.io
 
-Each request holds a calculator name, such as `microstrip-impedance`, and numbers: widths, heights, εr, copper thickness, a current or a target. It also carries your key (in the `X-API-Key` header, over HTTPS only) and `User-Agent: rftools-kicad/<version>`.
+Each request holds a calculator name, such as `microstrip-impedance`, and numbers: widths, heights, εr, copper thickness or weight, the board's thickness, a current or a target. It also carries your key (in the `X-API-Key` header, over HTTPS only) and `User-Agent: rftools-kicad/<version>`.
 
 The plugin never sends the board file, net or net-class names, layer names, the project name or its path.
 
@@ -126,7 +128,12 @@ Nothing in the board or the project changes unless you ask:
    - If KiCad applied nothing, or put other values in the three fields, the plugin says the write was not applied.
    - If a written class no longer lists itself as its only constituent, holds a different number of nets, or changed in any other setting, or if another class changed, the plugin says: **"The write did not apply correctly. Do not save the board; close it without saving and reopen it."**
 
-The width proposed for a class is the width for its single-ended target on its routing layer. Without a target, it is the IPC-2152 Fig. 5-1 width for its current, rounded up to the grid, but only if the class is narrower than that. Fig. 5-1 is the chart IPC-2152 recommends when nothing else about the board is known; it does not yet use the board's thickness or a plane's distance to narrow the width further — that board-specific width is a planned follow-up. The gap proposed is the gap for its differential target, at the class's current pair width.
+The width proposed for a class is the width for its single-ended target on its routing layer. Without a target, it is the width for its current on its routing layer, rounded up to the grid, but only if the class is narrower than that:
+
+- **the rftools thermal model (board-specific) width**, when the board, the trace and the plane lie inside the range the model is validated for. The plugin sends the model the board's thickness, the distance from the trace's layer to its nearest reference plane (through the dielectric, as on the layer model tab) and that plane's copper weight. Until you choose the planes on the layer model tab, it credits no plane: KiCad does not say which layers are planes, and a signal layer is not solid copper;
+- **the IPC-2152 Fig. 5-1 width** otherwise: the chart IPC-2152 recommends when nothing else about the board is known, and the conservative width for any conductor.
+
+The gap proposed is the gap for its differential target, at the class's current pair width.
 
 **Restore previous values…** writes the recorded values back the same way and records that too. Each Restore undoes one write, newest first. The history is kept per project, in `history.json` beside the settings file.
 

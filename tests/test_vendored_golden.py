@@ -31,5 +31,5 @@ def test_vendored_golden_file_is_byte_identical_to_the_monorepo_copy():
 def test_the_vendored_golden_file_is_committed_and_well_formed():
     # Not skipped: a standalone clone's CI runs the golden cases from this copy.
     data = json.loads(VENDORED.read_text(encoding="utf-8"))
-    assert [c["id"] for c in data["cases"]] == ["G1", "G2", "G3"]
+    assert [c["id"] for c in data["cases"]] == ["G1", "G2", "G3", "G3b"]
     assert data["grid"] == 0.001

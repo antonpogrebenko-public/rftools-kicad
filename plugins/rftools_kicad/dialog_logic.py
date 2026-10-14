@@ -9,8 +9,9 @@ holds and tests without a display:
     ``LayerModel.with_planes``), the structure computed on it (the model's own
     ``describe()``, which says when plies were combined) and its problems;
 (b) the net-class form: per class, whether it is selected, a single-ended and
-    a differential target, a coplanar gap, a current for the IPC-2152
-    Figure 5-1 width, the layer it is routed on (a class is board-wide and a
+    a differential target, a coplanar gap, a current for the width it needs
+    (the rftools thermal model's board-specific width and IPC-2152 Figure
+    5-1), the layer it is routed on (a class is board-wide and a
     width is per layer: the width written is the routing layer's), other
     layers to compute on, and a via check; plus the solder-mask option and the
     manufacturing grid;
@@ -60,9 +61,13 @@ from rftools_kicad.mapping import (
     CALCULATORS,
     COPLANAR,
     COVERED_MICROSTRIP,
+    METHOD_BOARD,
+    METHOD_CHART,
     SOLVE,
     Computation,
+    CurrentWidths,
     NetClassValues,
+    current_widths,
 )
 from rftools_kicad.settings import SOURCE_ENVIRONMENT, KeyError_, public_id, redact
 from rftools_kicad.solve import DEFAULT_GRID_MM, TargetResult, run_target
@@ -99,7 +104,8 @@ PLANE_SOURCE_TEXT = {
         "KiCad does not say which copper layers are planes, so every copper layer is "
         "proposed as a reference plane for its neighbours, and each is also computed as a "
         "signal layer against them. Untick the signal layers to choose the planes yourself: "
-        "then only unticked layers are computed."
+        "then only unticked layers are computed. Until you do, the board-specific width for "
+        "a current (rftools thermal model) credits no copper plane under the trace."
     ),
     PLANES_FROM_ROLES: "Planes proposed from the layers' types (power or mixed).",
     "override": "Planes as you chose them. Unticked layers are computed as signal layers.",
@@ -120,7 +126,7 @@ class ClassForm:
     impedance_target: str = ""  # Ω
     diff_target: str = ""  # Ω
     cpw_gap: str = ""  # mm; outer layers become grounded coplanar waveguide
-    current: str = ""  # A, for IPC-2152
+    current: str = ""  # A: the board-specific and IPC-2152 Fig. 5-1 widths
     #: The layer the class is routed on: its width is the one written, and
     #: its current is computed there.
     layer: str | None = None
@@ -162,6 +168,8 @@ class ResultRow:
     target: float | None = None
     refusal: Refusal | None = None
     computation: Computation | None = None
+    #: A current's two widths and the one proposed (FIGURE_CURRENT only).
+    widths: CurrentWidths | None = None
 
     @property
     def ok(self) -> bool:
@@ -566,8 +574,15 @@ class DialogState:
             return ResultRow(**base, **row, status=PROBLEM,
                              achieved="no value returned")
         if item.figure == FIGURE_CURRENT:
-            return ResultRow(**base, **row, suggested=_mm(figure.value),
-                             suggested_mm=float(figure.value))
+            widths = current_widths(figure.values)
+            if widths.proposed_mm is None:
+                return ResultRow(**base, **row, status=PROBLEM, achieved="no value returned")
+            row["note"] = "; ".join(x for x in (self._widths_text(item, widths), row["note"]) if x)
+            return ResultRow(
+                **base, **row, widths=widths,
+                suggested=f"{_mm(widths.proposed_mm)}, {widths.proposed_method}",
+                suggested_mm=widths.proposed_mm,
+            )
         if item.figure == FIGURE_VIA:
             return ResultRow(**base, **row, achieved=_via_text(figure.values or {}),
                              achieved_value=float(figure.value))
@@ -609,6 +624,30 @@ class DialogState:
         return ResultRow(**base, **row, suggested=_mm(result.value),
                          suggested_mm=float(result.value), note=warnings)
 
+    def _widths_text(self, item: PlannedItem, widths: CurrentWidths) -> str:
+        """Both widths for a current, each named by its method, and the one proposed."""
+        inputs = item.computation.input_dict
+        distance = inputs.get("planeDistance")
+        if distance:
+            plane = self.model.nearest_plane(item.layer) if item.layer else None
+            name = f"{plane.plane}, " if plane is not None else ""
+            under = (f"{name}a {_num(inputs.get('planeCopperWeight'))} oz plane, "
+                     f"{_mm(distance)} from the trace")
+        elif self.model.plane_source == PLANES_FROM_ADJACENCY:
+            under = "no plane credited until the planes are chosen on the Layer model tab"
+        else:
+            under = "no plane"
+        board = f"{_num(inputs.get('boardThickness'))} mm thick; {under}"
+        if widths.board_mm is None:
+            first = f"{METHOD_BOARD}: no width returned for this board ({board})"
+        else:
+            where = "inside" if widths.in_model_range else "outside"
+            first = (f"{METHOD_BOARD}: {_mm(widths.board_mm)} for this board ({board}), "
+                     f"{where} its validated range")
+        chart = (_mm(widths.chart_mm) if widths.chart_mm is not None else "no width returned")
+        return (f"{first}. {METHOD_CHART}: {chart}, the conservative chart for any conductor. "
+                f"Proposed: {widths.proposed_method}.")
+
     def _current_text(self, item: PlannedItem) -> str:
         try:
             nc = self.netclass(item.netclass)
@@ -633,8 +672,11 @@ class DialogState:
         """``({class: {field: nm}}, notes)`` from the results, for the selected classes.
 
         Track width: the routing layer's width for the single-ended target;
-        without a target, the IPC-2152 Fig. 5-1 width for the class's current
-        (rounded up to the grid) when the class is narrower. Differential-pair
+        without a target, the width for the class's current (rounded up to
+        the grid) when the class is narrower. That is the rftools thermal
+        model's board-specific width when its inputs lie inside the model's
+        validated range, and IPC-2152 Fig. 5-1 otherwise
+        (:attr:`mapping.CurrentWidths.board_proposed`). Differential-pair
         gap: the routing layer's gap for the differential target, at the
         class's pair width, which is kept.
         """
@@ -662,21 +704,25 @@ class DialogState:
             elif width is not None and width.status == UNREACHABLE:
                 notes.append(f"{nc.name}: no track width proposed; {width.note}")
             if current is not None and current.ok and current.suggested_mm is not None:
-                ipc_nm = math.ceil(current.suggested_mm * NM_PER_MM / grid_nm - 1e-9) * grid_nm
+                width_nm = math.ceil(current.suggested_mm * NM_PER_MM / grid_nm - 1e-9) * grid_nm
                 amps = current.computation.input_dict.get("current")
+                widths = current.widths
+                method = widths.proposed_method if widths is not None else METHOD_CHART
                 if N.TRACK_WIDTH in fields:
-                    if ipc_nm > fields[N.TRACK_WIDTH]:
+                    if width_nm > fields[N.TRACK_WIDTH]:
                         notes.append(
                             f"{nc.name}: the width for the impedance target is narrower than "
-                            f"the IPC-2152 Fig. 5-1 width for {_num(amps)} A "
-                            f"({N.nm_text(ipc_nm)}); the impedance width is proposed."
+                            f"the {method} width for {_num(amps)} A "
+                            f"({N.nm_text(width_nm)}); the impedance width is proposed."
                         )
-                elif nc.track_width_nm is None or ipc_nm > nc.track_width_nm:
-                    fields[N.TRACK_WIDTH] = ipc_nm
-                    notes.append(
-                        f"{nc.name}: track width is the IPC-2152 Fig. 5-1 width for "
-                        f"{_num(amps)} A on {form.layer}, rounded up to the grid."
-                    )
+                elif nc.track_width_nm is None or width_nm > nc.track_width_nm:
+                    fields[N.TRACK_WIDTH] = width_nm
+                    note = (f"{nc.name}: track width is the {method} width for "
+                            f"{_num(amps)} A on {form.layer}, rounded up to the grid")
+                    if method == METHOD_BOARD and widths.chart_mm is not None:
+                        note += (f"; {METHOD_CHART}, the conservative chart for any conductor, "
+                                 f"gives {_mm(widths.chart_mm)}")
+                    notes.append(note + ".")
             if gap is not None and gap.ok:
                 fields[N.DIFF_PAIR_GAP] = N.mm_to_nm(gap.suggested_mm)
                 notes.append(
@@ -810,8 +856,7 @@ def figure_label(item: PlannedItem) -> str:
         return f"Gap for {target} Ω differential" if target else "Gap for the target"
     if item.figure == FIGURE_CURRENT:
         amps = c.input_dict.get("current") if c is not None else None
-        return (f"IPC-2152 Fig. 5-1 width for {_num(amps)} A" if amps is not None
-                else "IPC-2152 Fig. 5-1 width")
+        return f"Width for {_num(amps)} A" if amps is not None else "Width for the current"
     if item.figure == FIGURE_VIA:
         return "Via Z, C, L and current"
     return item.figure

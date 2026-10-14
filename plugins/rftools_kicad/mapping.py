@@ -48,9 +48,21 @@ PRIMARY_OUTPUT = {
     PAIR_OUTER: "zdiff",
     PAIR_INNER_SYMMETRIC: "diffImpedance",
     PAIR_INNER_ASYMMETRIC: "diffImpedance",
-    CURRENT: "width2152mm",  # IPC-2152 Figure 5-1, the conservative chart (design Decision 11)
+    # IPC-2152 Figure 5-1, the conservative chart, always returned; the width
+    # proposed is chosen from it and the board-specific width by current_widths().
+    CURRENT: "width2152mm",
     VIA: "impedance",
 }
+
+#: trace-width-current's two widths, and whether its inputs lie inside the
+#: rftools thermal model's validated range (trace-thermal-model, Decision 14).
+WIDTH_CHART = "width2152mm"
+WIDTH_BOARD = "widthBoardMm"
+IN_MODEL_RANGE = "inModelRange"
+#: The methods, as every view names them. The board-specific width is rftools'
+#: own thermal model, not IPC-2152, and is never called IPC-2152.
+METHOD_CHART = "IPC-2152 Fig. 5-1"
+METHOD_BOARD = "rftools thermal model (board-specific)"
 
 #: trace-width-current: 1 oz of copper is 35 µm.
 OZ_UM = 35.0
@@ -344,40 +356,117 @@ def differential(model: LayerModel, layer: str, width_mm: float, gap_mm: float) 
 def trace_current(
     model: LayerModel, layer: str, current_a: float, options: Options = DEFAULT_OPTIONS
 ) -> Computation:
-    """IPC-2152 Figure 5-1 width for *current_a* on *layer* (``trace-width-current``).
+    """The widths for *current_a* on *layer* (``trace-width-current``), in one call.
 
-    :data:`PRIMARY_OUTPUT` reads ``width2152mm``: Figure 5-1, the chart IPC-2152
-    recommends for internal and external conductors in all environments when
-    nothing else about the board is known. It is the conservative width, not
-    IPC-2221's chart scaled by 0.75 or 0.85 (no reading of IPC-2152 supports
-    that relation, and it is narrower than every IPC-2152 reading at 2 A and
-    above). A board-specific width, from IPC-2152's detailed method (the
-    board's thickness and a plane's distance), is a planned follow-up and is
-    not computed yet.
+    The calculator returns two widths, and :func:`current_widths` picks the
+    one proposed (trace-thermal-model, design Decision 14):
 
-    ``copperWeight`` is the layer's copper in µm / 35; the calculator states
-    0.5–4 oz, and a layer outside that is flagged in ``out_of_range``.
-    ``isExternal`` is 1 on an outer layer. No reference plane is needed.
-    ``traceWidth`` (the drawn width the calculator's resistance, voltage-drop
-    and power outputs are for) stays at the calculator's own default: this
-    call proposes a width for *current_a* rather than checking one that is
-    already drawn, so the plugin has no drawn width of its own to send.
+    - ``widthBoardMm``, the rftools thermal model's width for this board: its
+      thickness and the copper plane nearest the trace. It is rftools' own
+      steady-state model, not IPC-2152, and is proposed when ``inModelRange``
+      is 1.
+    - ``width2152mm``, IPC-2152 Figure 5-1, the chart IPC-2152 recommends for
+      internal and external conductors in all environments when nothing else
+      about the board is known: the conservative width, proposed otherwise.
+      It is not IPC-2221's chart scaled by 0.75 or 0.85.
+
+    What is sent:
+
+    - ``copperWeight``: the layer's copper in µm / 35; the calculator states
+      0.5–4 oz, and a layer outside that is flagged in ``out_of_range``.
+    - ``isExternal``: 1 on an outer layer.
+    - ``boardThickness``: the stackup's ``boardThicknessNm``, in mm.
+    - ``planeDistance``: the height to :meth:`LayerModel.nearest_plane`, in mm,
+      and 0 (no plane) when there is none. That is the case until the planes
+      are known: the adjacency proposal credits no plane.
+    - ``planeCopperWeight``: that plane's copper in µm / 35, and the
+      calculator's default when there is no plane.
+    - ``traceWidth`` (the drawn width the calculator's resistance,
+      voltage-drop and power outputs are for) stays at the calculator's own
+      default: this call proposes a width for *current_a* rather than
+      checking one that is already drawn, so the plugin has no drawn width of
+      its own to send.
     """
     copper = model.copper_layer(layer)
     if copper.thickness_nm is None:
         raise MappingError(f"{layer} has no copper thickness in the stackup.")
+    if model.board_thickness_nm is None:
+        raise MappingError(
+            "The stackup does not give the board thickness, so the width for a current "
+            "is not computed."
+        )
     mapped = {
         "current": current_a,
         "copperWeight": copper.thickness_nm / NM_PER_UM / OZ_UM,
         "tempRise": options.temp_rise_c,
         "isExternal": 1 if copper.outer else 0,
+        "boardThickness": model.board_thickness_nm / NM_PER_MM,
     }
     defaults = ["traceWidth"]
     if options.trace_length_mm is None:
         defaults.append("traceLength")
     else:
         mapped["traceLength"] = options.trace_length_mm
+    plane = model.nearest_plane(layer)
+    if plane is None:
+        mapped["planeDistance"] = 0
+        defaults.append("planeCopperWeight")
+    else:
+        if plane.copper_thickness_nm is None:
+            raise MappingError(
+                f"{plane.plane}, the plane nearest {layer}, has no copper thickness in the "
+                "stackup, so the width for a current is not computed."
+            )
+        mapped["planeDistance"] = plane.height_nm / NM_PER_MM
+        mapped["planeCopperWeight"] = plane.copper_thickness_nm / NM_PER_UM / OZ_UM
     return _complete(CURRENT, mapped, from_defaults=defaults)
+
+
+@dataclass(frozen=True)
+class CurrentWidths:
+    """``trace-width-current``'s two widths for one current, and the one proposed.
+
+    ``chart_mm`` is IPC-2152 Figure 5-1 (:data:`METHOD_CHART`), the
+    conservative width for any conductor. ``board_mm`` is the rftools thermal
+    model's width for this board (:data:`METHOD_BOARD`); it is None when the
+    model reached no steady state, and in a result from before the model.
+    ``in_model_range`` is whether the inputs lie inside that model's validated
+    range (``inModelRange`` is 1).
+    """
+
+    chart_mm: float | None
+    board_mm: float | None
+    in_model_range: bool
+
+    @property
+    def board_proposed(self) -> bool:
+        """The rule of design Decision 14: the board-specific width inside the
+        thermal model's validated range, IPC-2152 Figure 5-1 otherwise."""
+        return self.in_model_range and self.board_mm is not None
+
+    @property
+    def proposed_mm(self) -> float | None:
+        return self.board_mm if self.board_proposed else self.chart_mm
+
+    @property
+    def proposed_method(self) -> str:
+        return METHOD_BOARD if self.board_proposed else METHOD_CHART
+
+
+def current_widths(values: Mapping[str, Any] | None) -> CurrentWidths:
+    """The widths in a ``trace-width-current`` result's ``values``."""
+    values = values or {}
+
+    def width(key: str) -> float | None:
+        value = values.get(key)
+        return float(value) if _is_number(value) and value > 0 else None
+
+    flag = values.get(IN_MODEL_RANGE)
+    return CurrentWidths(
+        chart_mm=width(WIDTH_CHART),
+        board_mm=width(WIDTH_BOARD),
+        in_model_range=_is_number(flag) and flag == 1,
+    )
 
 
 def via(

@@ -60,7 +60,9 @@ POWER = NetClassValues("Power", track_width_nm=500000, clearance_nm=250000)
 CLASSES = [HIGH, USB, POWER]
 
 VALUES = {
-    CURRENT: {"width2221mm": 0.7859736537100402, "width2152mm": 0.5894802402825302},
+    # Outside the rftools thermal model's validated range: Figure 5-1 is proposed.
+    CURRENT: {"width2221mm": 0.7859736537100402, "width2152mm": 0.5894802402825302,
+              "widthBoardMm": 0.4123, "inModelRange": 0},
     VIA: {"impedance": 48.21, "capacitancePF": 0.412, "inductanceNH": 1.02,
           "currentCapacityA": 3.1, "aspectRatio": 5.3},
 }
@@ -312,8 +314,9 @@ def test_a_run_shows_current_suggested_achieved_formula_range_engine_and_cache(t
     assert width.label == "Width for 50 Ω" and width.current == "0.2 mm"
     assert width.suggested == "0.284 mm" and width.achieved == "50.00 Ω"
     assert width.suggested_mm == 0.284 and width.status == D.OK
-    assert current.label == "IPC-2152 Fig. 5-1 width for 2 A"
-    assert current.suggested == "0.5895 mm" and current.current == "0.2 mm"
+    assert current.label == "Width for 2 A"
+    assert current.suggested == "0.5895 mm, IPC-2152 Fig. 5-1" and current.current == "0.2 mm"
+    assert current.suggested_mm == 0.5894802402825302
     assert via.current == "0.6 / 0.3 mm (pad / drill)"
     assert via.achieved == "Z 48.21 Ω, C 0.412 pF, L 1.02 nH, I 3.1 A"
     assert via.layer is None and via.cells()[1] == "board"
@@ -488,6 +491,134 @@ def test_an_impedance_width_narrower_than_the_current_needs_is_flagged(tmp_path)
     proposals, notes = state.proposals()
     assert proposals == {"HighSpeed": {N.TRACK_WIDTH: 284000}}
     assert any("narrower than the IPC-2152 Fig. 5-1 width for 3 A (0.59 mm)" in n for n in notes)
+
+
+def current_answer(chart=0.5894802402825302, board=0.4123, in_range=1):
+    """trace-width-current answering with both widths; anything else as :func:`answer`."""
+    def calculate(slug, inputs):
+        if slug != CURRENT:
+            return answer(slug, inputs)
+        values = dict(VALUES[CURRENT], width2152mm=chart, widthBoardMm=board,
+                      inModelRange=in_range)
+        return calc_response(slug, inputs, values)
+    return calculate
+
+
+def test_inside_the_thermal_models_range_the_board_specific_width_is_suggested(tmp_path):
+    client = FakeClient(calculate=current_answer(), solve=solver())
+    state = state_for(tmp_path, layer_model(four_layer()), client=client)
+    state.set_form("HighSpeed", selected=True, single_ended=False, current="2")
+    [row] = state.run().rows
+    # The board the thermal model was given: F.Cu over In1.Cu, 0.2 mm of prepreg.
+    [(_, body)] = client.metered
+    assert {k: body["inputs"][k] for k in ("boardThickness", "planeDistance",
+                                            "planeCopperWeight", "isExternal")} == {
+        "boardThickness": 1.6, "planeDistance": 0.2, "planeCopperWeight": 1.0, "isExternal": 1,
+    }
+    assert row.label == "Width for 2 A" and row.ok
+    assert row.suggested == "0.4123 mm, rftools thermal model (board-specific)"
+    assert row.suggested_mm == 0.4123 and row.widths.board_proposed
+    assert "2152" not in row.suggested
+    # Both widths, each named by its method.
+    assert row.note.startswith(
+        "rftools thermal model (board-specific): 0.4123 mm for this board (1.6 mm thick; "
+        "In1.Cu, a 1 oz plane, 0.2 mm from the trace), inside its validated range. "
+        "IPC-2152 Fig. 5-1: 0.5895 mm, the conservative chart for any conductor. "
+        "Proposed: rftools thermal model (board-specific)."
+    )
+
+
+def test_outside_the_thermal_models_range_figure_5_1_is_suggested(tmp_path):
+    client = FakeClient(calculate=current_answer(in_range=0), solve=solver())
+    state = state_for(tmp_path, layer_model(four_layer()), client=client)
+    state.set_form("HighSpeed", selected=True, single_ended=False, current="2")
+    [row] = state.run().rows
+    assert row.suggested == "0.5895 mm, IPC-2152 Fig. 5-1"
+    assert row.suggested_mm == 0.5894802402825302 and not row.widths.board_proposed
+    assert ("rftools thermal model (board-specific): 0.4123 mm for this board (1.6 mm thick; "
+            "In1.Cu, a 1 oz plane, 0.2 mm from the trace), outside its validated range. "
+            "IPC-2152 Fig. 5-1: 0.5895 mm") in row.note
+    assert "Proposed: IPC-2152 Fig. 5-1." in row.note
+
+
+def test_with_the_planes_guessed_the_current_credits_none_and_says_so(tmp_path):
+    client = FakeClient(calculate=current_answer(), solve=solver())
+    state = state_for(tmp_path, layer_model(four_layer(roles=False)), client=client)
+    assert "credits no copper plane under the trace" in state.plane_source_text()
+    state.set_form("HighSpeed", selected=True, single_ended=False, current="2")
+    [row] = state.run().rows
+    assert client.metered[0][1]["inputs"]["planeDistance"] == 0
+    assert ("(1.6 mm thick; no plane credited until the planes are chosen on the Layer model tab)"
+            in row.note)
+    # Marking the planes credits In1.Cu.
+    state.set_plane("F.Cu", False)
+    state.set_plane("B.Cu", False)
+    [row] = state.run().rows
+    assert client.metered[1][1]["inputs"]["planeDistance"] == 0.2
+    assert "In1.Cu, a 1 oz plane, 0.2 mm from the trace" in row.note
+
+
+def test_a_current_proposes_the_board_specific_width_inside_the_range(tmp_path):
+    client = FakeClient(calculate=current_answer(chart=1.2, board=0.8123), solve=solver())
+    state, _ = project_state(tmp_path, model=layer_model(four_layer()), client=client)
+    state.set_form("Power", selected=True, single_ended=False, current="3")
+    state.run()
+    proposals, notes = state.proposals()
+    assert proposals == {"Power": {N.TRACK_WIDTH: 813000}}  # 0.8123 mm up to the grid
+    assert any(
+        "track width is the rftools thermal model (board-specific) width for 3 A on F.Cu, "
+        "rounded up to the grid; IPC-2152 Fig. 5-1, the conservative chart for any conductor, "
+        "gives 1.2 mm." in n for n in notes
+    ), notes
+
+
+def test_a_current_proposes_figure_5_1_outside_the_range(tmp_path):
+    client = FakeClient(calculate=current_answer(chart=1.2, board=0.8123, in_range=0),
+                        solve=solver())
+    state, _ = project_state(tmp_path, model=layer_model(four_layer()), client=client)
+    state.set_form("Power", selected=True, single_ended=False, current="3")
+    state.run()
+    proposals, notes = state.proposals()
+    assert proposals == {"Power": {N.TRACK_WIDTH: 1200000}}
+    assert any("track width is the IPC-2152 Fig. 5-1 width for 3 A on F.Cu, rounded up to "
+               "the grid." in n for n in notes), notes
+
+
+def test_an_impedance_width_narrower_than_the_board_specific_width_names_its_method(tmp_path):
+    client = FakeClient(calculate=current_answer(chart=1.2, board=0.8123), solve=solver())
+    state, _ = project_state(tmp_path, model=layer_model(four_layer()), client=client)
+    state.set_form("HighSpeed", selected=True, impedance_target="50", current="3")
+    state.run()
+    proposals, notes = state.proposals()
+    assert proposals == {"HighSpeed": {N.TRACK_WIDTH: 284000}}
+    assert any("narrower than the rftools thermal model (board-specific) width for 3 A "
+               "(0.813 mm)" in n for n in notes), notes
+
+
+def test_the_range_names_the_thermal_model_when_it_alone_is_outside(tmp_path):
+    def calculate(slug, inputs):
+        response = current_answer(in_range=0)(slug, inputs)
+        response["provenance"]["validRange"] = {
+            "status": "outside", "bounds": {}, "outside": [],
+            "model": {"description": "IPC-2152 Figure 5-1 through I = 0.024·ΔT^0.44·A^0.725",
+                      "worstCaseError": 0.12, "inside": True},
+            "models": [
+                {"description": "IPC-2152 Figure 5-1 through I = 0.024·ΔT^0.44·A^0.725",
+                 "worstCaseError": 0.12, "inside": True},
+                {"description": "rftools thermal model (board-specific), a closed-form "
+                                "thermal network", "worstCaseError": 0.029, "inside": False},
+            ],
+        }
+        return response
+
+    state = state_for(tmp_path, layer_model(four_layer()), client=FakeClient(calculate=calculate))
+    state.set_form("HighSpeed", selected=True, single_ended=False, current="2")
+    [row] = state.run().rows
+    assert row.range == (
+        "outside: outside the fitted model's validated range (rftools thermal model "
+        "(board-specific), a closed-form thermal network)"
+    )
+    assert row.suggested == "0.5895 mm, IPC-2152 Fig. 5-1"
 
 
 def test_changing_the_model_after_a_run_blocks_the_write_until_run_again(tmp_path):

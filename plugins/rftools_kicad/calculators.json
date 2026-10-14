@@ -408,6 +408,27 @@
           "default": 0.5,
           "min": 0.01,
           "max": 100
+        },
+        {
+          "key": "boardThickness",
+          "unit": "mm",
+          "default": 1.6,
+          "min": 0.2,
+          "max": 6
+        },
+        {
+          "key": "planeDistance",
+          "unit": "mm",
+          "default": 0,
+          "min": 0,
+          "max": 6
+        },
+        {
+          "key": "planeCopperWeight",
+          "unit": "oz",
+          "default": 0.5,
+          "min": 0.5,
+          "max": 2
         }
       ],
       "outputs": [
@@ -416,9 +437,11 @@
         "resistance",
         "voltageDrop",
         "powerDiss",
-        "inChartRange"
+        "inChartRange",
+        "widthBoardMm",
+        "inModelRange"
       ],
-      "formulaRef": "IPC-2221A (May 2003) §6.2, Figure 6-4 (the chart of IPC-2221, February 1998), through its published fit; IPC-2152 (August 2009) §5, Figure 5-1"
+      "formulaRef": "IPC-2221A (May 2003) §6.2, Figure 6-4 (the chart of IPC-2221, February 1998), through its published fit; IPC-2152 (August 2009) §5, Figure 5-1; the board-specific width: rftools thermal model (board-specific), fitted to its own 2-D solver and checked against Brooks & Adam (2015), Jouppi (2010) and Olson (2010)"
     },
     "via-calculator": {
       "title": "PCB Via Calculator",

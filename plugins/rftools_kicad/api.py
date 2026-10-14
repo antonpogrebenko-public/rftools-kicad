@@ -514,10 +514,14 @@ def range_notes(provenance: dict | None) -> tuple:
         else:
             crossed = "outside the stated range"
         notes.append(f"{key}{shown} is {crossed}")
-    model = valid.get("model") or {}
-    if model.get("inside") is False:
-        notes.append(
-            "outside the fitted model's validated range "
-            f"({model.get('description') or 'see the formula reference'})"
-        )
+    # A calculator with two fitted models (trace-width-current: Figure 5-1's
+    # fit and the rftools thermal model) lists both in ``models``; ``model`` is
+    # the first of them, and the only one otherwise.
+    models = valid.get("models") or ([valid["model"]] if valid.get("model") else [])
+    for model in models:
+        if model.get("inside") is False:
+            notes.append(
+                "outside the fitted model's validated range "
+                f"({model.get('description') or 'see the formula reference'})"
+            )
     return tuple(notes)

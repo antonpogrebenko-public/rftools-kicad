@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The golden cases G1–G3 against the production API, through the plugin's client (task 5.3).
+"""The golden cases G1–G3b against the production API, through the plugin's client (task 5.3).
 
 Run by .github/workflows/live-golden.yml weekly, before each release is
 published, and on demand, with the ``RFTOOLS_API_KEY`` secret:
@@ -14,9 +14,15 @@ certifi) — the path a user's run takes, with no result cache:
     G1  one solve: microstrip-impedance traceWidth for 50 Ω on the 0.001 mm grid
         must return the golden grid width, with the forward outputs at it
     G2  one forward call: asymmetric-stripline at the stated width
-    G3  one forward call: trace-width-current for 2 A
+    G3  one forward call: trace-width-current for 2 A on G1's two-layer board,
+        no plane credited: IPC-2152 Figure 5-1 and the rftools thermal model's
+        board-specific width for a 1.6 mm board with no plane
+    G3b one forward call: trace-width-current for 2 A on a four-layer 1.6 mm
+        board, a ½ oz plane 0.2 mm under F.Cu: the board-specific width
+        (trace-thermal-model), with the board's thickness, the plane's distance
+        and its copper weight as the plugin's mapping sends them
 
-That is **at most three metered calls per run**; reading the allowance first
+That is **at most four metered calls per run**; reading the allowance first
 (``GET /v1/usage``) is never metered. Every output is compared with the
 golden value to a relative 1e-6, the parity check's tolerance. The exit code
 is 1 on any difference, refusal or shortfall.
@@ -43,8 +49,8 @@ from rftools_kicad.stackup import layer_model  # noqa: E402
 
 GOLDEN = ROOT / "golden" / "kicad-golden.json"
 ENV_VAR = "RFTOOLS_API_KEY"
-#: G1 one solve, G2 one forward, G3 one forward.
-MAX_CALLS = 3
+#: G1 one solve; G2, G3 and G3b one forward call each.
+MAX_CALLS = 4
 REL_TOL = 1e-6
 
 
@@ -182,7 +188,7 @@ def main(argv: list | None = None, environ: dict | None = None, client_factory=N
     key = (environ.get(ENV_VAR) or "").strip()
     if not key:
         print(f"::notice title=Live golden check skipped::The {ENV_VAR} secret is not set, so "
-              "G1–G3 were not run against the production API. Add the secret (a free key made "
+              "G1–G3b were not run against the production API. Add the secret (a free key made "
               "through the key link with client=kicad-plugin) to run them.")
         return 0
     results, requests = run((client_factory or make_client)(key), load_golden(),

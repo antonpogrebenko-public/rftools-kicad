@@ -145,3 +145,24 @@ def test_range_notes_name_the_bound_crossed():
     }
     result = from_response(request, response)
     assert result.outside == ("traceWidth 0.005 mm is below the minimum 0.01 mm",)
+
+
+def test_range_notes_name_every_fitted_model_outside():
+    chart = {"description": "Figure 5-1's fit", "worstCaseError": 0.12}
+    thermal = {"description": "rftools thermal model (board-specific)", "worstCaseError": 0.029}
+
+    def notes(valid):
+        return A.range_notes({"validRange": dict({"bounds": {}, "outside": []}, **valid)})
+
+    # One model: ``model`` alone, as every other calculator reports it.
+    assert notes({"model": dict(chart, inside=False)}) == (
+        "outside the fitted model's validated range (Figure 5-1's fit)",
+    )
+    assert notes({"model": dict(chart, inside=True)}) == ()
+    # Two: ``models`` lists both, and ``model`` is the first of them.
+    both = [dict(chart, inside=True), dict(thermal, inside=False)]
+    assert notes({"model": both[0], "models": both}) == (
+        "outside the fitted model's validated range (rftools thermal model (board-specific))",
+    )
+    both = [dict(chart, inside=False), dict(thermal, inside=False)]
+    assert len(notes({"model": both[0], "models": both})) == 2

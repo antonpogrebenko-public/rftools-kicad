@@ -197,6 +197,32 @@ def test_render_alone_is_a_page_without_controls(tmp_path):
     assert "Nothing was computed." in page and "a note" in page
 
 
+def test_a_current_shows_both_widths_each_with_its_method(tmp_path):
+    # The report runs no current itself, but it renders every row the state
+    # holds: a current's row names the width proposed and both widths.
+    from rftools_kicad.dialog_logic import DialogState
+    from tests.support import calc_response
+
+    def calculate(slug, inputs):
+        return calc_response(slug, inputs, {
+            "width2152mm": 2.0328625490354195, "widthBoardMm": 0.5422602208519343,
+            "inModelRange": 1, "inChartRange": 1,
+        })
+
+    state = DialogState(layer_model(four_layer()), CLASSES,
+                        services_for(tmp_path, client=FakeClient(calculate=calculate)))
+    state.set_form("Power", selected=True, single_ended=False, current="2")
+    state.run()
+    page = R.render(state)
+    assert not CONTROLS & set(parse(page).tags)
+    text = " ".join(parse(page).text)
+    assert "Width for 2 A" in text
+    assert "0.5423 mm, rftools thermal model (board-specific)" in text
+    assert "rftools thermal model (board-specific): 0.5423 mm for this board" in text
+    assert "IPC-2152 Fig. 5-1: 2.0329 mm, the conservative chart for any conductor" in text
+    assert "IPC-2152 rftools" not in text and "IPC-2152 thermal" not in text
+
+
 def test_main_falls_back_to_the_report_when_wx_cannot_load(monkeypatch):
     monkeypatch.setitem(sys.modules, "wx", None)  # import wx fails
     monkeypatch.delitem(sys.modules, "rftools_kicad.dialog", raising=False)

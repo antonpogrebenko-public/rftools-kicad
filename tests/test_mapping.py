@@ -136,7 +136,7 @@ def test_current_on_an_outer_layer():
     assert c.slug == "trace-width-current" and c.output == "width2152mm"
     assert c.input_dict == {
         "current": 2, "copperWeight": 1.0, "tempRise": 10.0, "traceLength": 100, "isExternal": 1,
-        "traceWidth": 0.5,
+        "traceWidth": 0.5, "boardThickness": 1.6, "planeDistance": 0, "planeCopperWeight": 0.5,
     }
     assert c.out_of_range == ()
 
@@ -146,8 +146,108 @@ def test_current_on_an_inner_half_ounce_layer_with_options():
     c = M.trace_current(layer_model(six_layer()), "In3.Cu", 1.5, options)
     assert c.input_dict == {
         "current": 1.5, "copperWeight": 0.5, "tempRise": 20, "traceLength": 50, "isExternal": 0,
-        "traceWidth": 0.5,
+        "traceWidth": 0.5, "boardThickness": 1.6,
+        # In4.Cu, 0.415 mm of core below; In1.Cu is 0.6625 mm above.
+        "planeDistance": 0.415, "planeCopperWeight": 0.5,
     }
+
+
+# The board the thermal model reads (trace-thermal-model, design Decision 14).
+
+
+def test_current_credits_no_plane_while_the_planes_are_guessed():
+    # KiCad states no layer roles, so every copper layer is proposed as a plane
+    # for impedance (F.Cu is microstrip over In1.Cu), but a signal layer is not
+    # solid copper: the board-specific width credits no plane until the planes
+    # are known.
+    model = layer_model(four_layer(roles=False))
+    assert model.plane_source == "adjacency"
+    assert model.structure("F.Cu").reference == "In1.Cu"
+    assert model.nearest_plane("F.Cu") is None
+    c = M.trace_current(model, "F.Cu", 2)
+    assert c.input_dict["boardThickness"] == 1.6
+    assert c.input_dict["planeDistance"] == 0  # no plane
+    assert c.input_dict["planeCopperWeight"] == 0.5  # the calculator's default
+    assert c.out_of_range == ()
+
+
+def test_current_on_an_outer_layer_over_a_plane():
+    model = layer_model(four_layer())  # In1.Cu and In2.Cu typed power, 35 µm
+    c = M.trace_current(model, "F.Cu", 2)
+    assert c.input_dict == {
+        "current": 2, "copperWeight": 1.0, "tempRise": 10.0, "traceLength": 100, "isExternal": 1,
+        "traceWidth": 0.5, "boardThickness": 1.6, "planeDistance": 0.2, "planeCopperWeight": 1.0,
+    }
+    # B.Cu's plane is inward of it, above.
+    plane = model.nearest_plane("B.Cu")
+    assert (plane.plane, plane.height_nm) == ("In2.Cu", 200000)
+    assert M.trace_current(model, "B.Cu", 2).input_dict["planeDistance"] == 0.2
+    # The same planes chosen by the user on KiCad's untyped stackup send the same.
+    chosen = layer_model(four_layer(roles=False)).with_planes(["In1.Cu", "In2.Cu"])
+    assert chosen.plane_source == "override"
+    assert M.trace_current(chosen, "F.Cu", 2).input_dict == c.input_dict
+    # Two plies under B.Cu of the six-layer board: their total height.
+    assert M.trace_current(layer_model(six_layer()), "B.Cu", 2).input_dict["planeDistance"] == 0.19
+
+
+def test_current_on_an_internal_layer_takes_the_nearer_plane():
+    model = layer_model(six_layer())
+    c = M.trace_current(model, "In2.Cu", 1)
+    assert model.nearest_plane("In2.Cu").plane == "In1.Cu"  # 0.415 mm above; In4.Cu 0.6625 below
+    assert c.input_dict["isExternal"] == 0
+    assert c.input_dict["planeDistance"] == 0.415
+    assert c.input_dict["planeCopperWeight"] == 0.5  # In1.Cu is 17.5 µm
+
+
+def test_equally_near_planes_take_the_one_below():
+    stackup = four_layer(roles=False)
+    stackup["layers"][4]["sublayers"][0]["thicknessNm"] = 200000  # In1.Cu centred
+    stackup["layers"][5]["thicknessNm"] = 17500  # In2.Cu ½ oz, F.Cu 1 oz
+    model = layer_model(stackup).with_planes(["F.Cu", "In2.Cu"])
+    plane = model.nearest_plane("In1.Cu")
+    assert (plane.plane, plane.height_nm, plane.copper_thickness_nm) == ("In2.Cu", 200000, 17500)
+    assert M.trace_current(model, "In1.Cu", 1).input_dict["planeCopperWeight"] == 0.5
+
+
+def test_current_needs_the_board_thickness_and_the_planes_copper():
+    stackup = two_layer()
+    stackup["boardThicknessNm"] = None
+    stackup["layers"][0]["thicknessNm"] = None  # F.Mask: the total cannot be summed either
+    with pytest.raises(M.MappingError, match="does not give the board thickness"):
+        M.trace_current(layer_model(stackup), "F.Cu", 1)
+    stackup = four_layer()
+    stackup["layers"][3]["thicknessNm"] = None  # In1.Cu
+    with pytest.raises(M.MappingError, match="In1.Cu, the plane nearest F.Cu, has no copper"):
+        M.trace_current(layer_model(stackup), "F.Cu", 1)
+
+
+def test_a_plane_outside_the_calculators_stated_copper_is_flagged():
+    stackup = four_layer()
+    stackup["layers"][3]["thicknessNm"] = 12000  # In1.Cu: 0.34 oz
+    c = M.trace_current(layer_model(stackup), "F.Cu", 1)
+    assert c.input_dict["planeCopperWeight"] == 12000 / 1e3 / 35
+    [flag] = c.out_of_range
+    assert flag.key == "planeCopperWeight" and (flag.min, flag.max) == (0.5, 2)
+
+
+def test_the_board_specific_width_is_proposed_only_inside_the_thermal_models_range():
+    inside = M.current_widths({"width2152mm": 2.03, "widthBoardMm": 0.54, "inModelRange": 1})
+    assert inside.board_proposed and inside.proposed_mm == 0.54
+    assert inside.proposed_method == "rftools thermal model (board-specific)"
+    assert "2152" not in inside.proposed_method
+    assert (inside.chart_mm, inside.board_mm) == (2.03, 0.54)
+    outside = M.current_widths({"width2152mm": 2.03, "widthBoardMm": 0.54, "inModelRange": 0})
+    assert not outside.board_proposed and outside.proposed_mm == 2.03
+    assert outside.proposed_method == "IPC-2152 Fig. 5-1"
+    assert outside.board_mm == 0.54  # still shown
+    for values in (
+        {"width2152mm": 2.03, "widthBoardMm": None, "inModelRange": 1},  # no steady state
+        {"width2152mm": 2.03, "width2221mm": 0.78},  # a result from before the model
+        {"width2152mm": 2.03, "widthBoardMm": 0.54, "inModelRange": True},
+        {"width2152mm": 2.03, "widthBoardMm": 0.54, "inModelRange": 0.5},
+    ):
+        widths = M.current_widths(values)
+        assert widths.proposed_mm == 2.03 and widths.proposed_method == "IPC-2152 Fig. 5-1", values
 
 
 def test_copper_weight_outside_half_to_four_ounces_is_flagged():
