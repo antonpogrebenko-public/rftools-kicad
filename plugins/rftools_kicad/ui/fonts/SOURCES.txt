@@ -1,0 +1,12 @@
+The faces rftools.io sets its pages in (frontend/src/lib/design/fonts.ts),
+Latin subsets as Google Fonts serves them, fetched 2026-11-09:
+
+InstrumentSans-latin-wght.woff2  Instrument Sans, variable wght 400-700
+IBMPlexMono-latin-400.woff2      IBM Plex Mono 400
+IBMPlexMono-latin-500.woff2      IBM Plex Mono 500
+IBMPlexMono-latin-600.woff2      IBM Plex Mono 600
+
+Both families are under the SIL Open Font License 1.1: OFL-InstrumentSans.txt
+and OFL-IBMPlexMono.txt (from github.com/google/fonts, ofl/instrumentsans and
+ofl/ibmplexmono). Characters outside the Latin subsets, such as Greek and
+subscript digits, fall back to the system's faces, as they do on the site.
