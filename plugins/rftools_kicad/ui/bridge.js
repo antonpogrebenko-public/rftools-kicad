@@ -73,11 +73,29 @@
     }
   });
 
+  // The page is the window: a reload or Back would leave it blank (the plugin
+  // also refuses any navigation once the page is ready).
+  function leavesThePage(event) {
+    var key = event.key;
+    if (key === "F5" || key === "BrowserBack" || key === "BrowserForward" || key === "BrowserRefresh") return true;
+    if ((event.ctrlKey || event.metaKey) && (key === "r" || key === "R")) return true;
+    return event.altKey && (key === "ArrowLeft" || key === "ArrowRight");
+  }
+
   document.addEventListener("keydown", function (event) {
+    if (leavesThePage(event)) {
+      event.preventDefault();
+      return;
+    }
     if (event.key === "Enter" && event.target.id === "key-field") {
       var save = document.querySelector('[data-action="save_key"]');
       if (save) save.click();
     }
+  });
+
+  // A mouse's back and forward buttons (3 and 4).
+  document.addEventListener("mouseup", function (event) {
+    if (event.button === 3 || event.button === 4) event.preventDefault();
   });
 
   window.rftoolsUpdate = function (regions) {

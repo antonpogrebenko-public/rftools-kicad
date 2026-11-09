@@ -100,11 +100,28 @@ def test_the_entrypoint_resolves_as_kicad_extracts_the_package(built, tmp_path):
             path = target / info.filename.removeprefix("plugins/")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(archive.read(info))
+    # The installed plugin keeps its licence and the name notice.
+    assert (target / "LICENSE").read_bytes() == (ROOT / "LICENSE").read_bytes()
+    assert (target / "NOTICE").read_bytes() == (ROOT / "NOTICE").read_bytes()
     plugin = json.loads((target / "plugin.json").read_text())
     for action in plugin["actions"]:
         assert (target / action["entrypoint"]).is_file()
         for icon in action["icons-light"] + action["icons-dark"]:
             assert (target / icon).is_file()
+
+
+def test_a_missing_licence_or_notice_stops_the_build(tmp_path):
+    root = copy_of_repo(tmp_path)
+    (root / "NOTICE").unlink()
+    with pytest.raises(B.ReleaseError, match="NOTICE"):
+        B.archive_files(root)
+
+
+def test_two_files_under_one_archive_name_stop_the_build(tmp_path, monkeypatch):
+    root = copy_of_repo(tmp_path)
+    monkeypatch.setattr(B, "ARCHIVE_EXTRA", {**B.ARCHIVE_EXTRA, "plugins/plugin.json": "LICENSE"})
+    with pytest.raises(B.ReleaseError, match="plugins/plugin.json"):
+        B.archive_files(root)
 
 
 def test_the_same_commit_builds_the_same_bytes(tmp_path):

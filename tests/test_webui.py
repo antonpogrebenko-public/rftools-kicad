@@ -10,7 +10,7 @@ from rftools_kicad import webui as U
 from rftools_kicad.dialog_logic import DialogState
 from rftools_kicad.mapping import NetClassValues
 from rftools_kicad.stackup import layer_model
-from tests.support import KEY, FakeServices, four_layer
+from tests.support import KEY, FakeServices, _cu, _diel, _mask, four_layer
 
 CLASSES = [
     NetClassValues("HighSpeed", track_width_nm=200000, diff_pair_width_nm=130000,
@@ -107,6 +107,18 @@ def test_names_are_escaped(tmp_path):
     assert html.escape(name) in main
 
 
+def test_layer_names_are_escaped_on_every_step(tmp_path):
+    name = '<In1>&"gnd"'
+    stackup = four_layer()
+    stackup["layers"][3]["name"] = name
+    state = DialogState(layer_model(stackup), CLASSES, FakeServices(tmp_path))
+    for step in U.STEPS:
+        regions = U.render_regions(U.Session(state, step=step))
+        for region, markup in regions.items():
+            assert name not in markup, (step, region)
+    assert html.escape(name) in U.render_regions(U.Session(state, step="layers"))["main"]
+
+
 def test_report_has_no_controls(tmp_path):
     page = U.page(U.Session(ran(tmp_path)), theme="auto", controls=False)
     for control in CONTROLS:
@@ -127,8 +139,21 @@ def test_the_page_carries_the_sites_tokens_fonts_and_logo(tmp_path):
     assert '<symbol id="rf-mark"' in page
 
 
+def twelve_layer() -> dict:
+    """Twelve copper layers, alternating signal and plane, 2.4 mm."""
+    layers = [_mask("F.Mask")]
+    names = ["F.Cu"] + [f"In{i}.Cu" for i in range(1, 11)] + ["B.Cu"]
+    for i, name in enumerate(names):
+        layers.append(_cu(name, role="power" if i % 2 else "signal"))
+        if i < len(names) - 1:
+            layers.append(_diel(f"dielectric {i + 1}", ("2116 prepreg", 190000, 4.3)))
+    layers.append(_mask("B.Mask"))
+    return {"boardThicknessNm": 2400000, "layers": layers}
+
+
 def test_forty_classes_render_quickly_and_scroll(tmp_path):
-    stackup = four_layer()
+    stackup = twelve_layer()
+    assert len(layer_model(stackup).copper_names) == 12
     classes = [NetClassValues(f"Class{i}", track_width_nm=150000 + i * 1000) for i in range(40)]
     state = DialogState(layer_model(stackup), classes, FakeServices(tmp_path))
     started = time.perf_counter()

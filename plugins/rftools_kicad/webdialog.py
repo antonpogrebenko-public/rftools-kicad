@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import sys
 from typing import Any, Callable
 
 import wx
@@ -41,8 +42,24 @@ def web_view_backend() -> tuple:
                   "(Internet Explorer's is never used)")
 
 
+WINDOWS_THEME_KEY = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+
+
 def theme() -> str:
-    """KiCad's light or dark appearance, as the system reports it."""
+    """The system's light or dark setting.
+
+    On Windows that is the "app mode" setting: the plugin runs in its own
+    process, where wx's IsDark reports Win32's light colours even when Windows
+    is set to dark. Elsewhere, and where Windows has no such setting, wx says."""
+    if sys.platform == "win32":
+        try:
+            import winreg
+
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, WINDOWS_THEME_KEY) as key:
+                light, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            return "light" if light else "dark"
+        except (ImportError, OSError):
+            pass
     try:
         return "dark" if wx.SystemSettings.GetAppearance().IsDark() else "light"
     except AttributeError:  # a wx without GetAppearance
@@ -141,6 +158,13 @@ class WebDialog(wx.Dialog):
     def __init__(self, parent: Any, state: DialogState, backend: Any) -> None:
         super().__init__(parent, title=webui.TITLE,
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER | wx.MAXIMIZE_BOX)
+        try:
+            self._build(state, backend)
+        except BaseException:  # show() falls back; a half-built window must not linger
+            self.Destroy()
+            raise
+
+    def _build(self, state: DialogState, backend: Any) -> None:
         self.session = webui.start(state)
         self.ready = False
         self.ui = WxUi(self)
@@ -166,9 +190,11 @@ class WebDialog(wx.Dialog):
     def on_navigating(self, event: Any) -> None:
         """The page never leaves itself: web and file URLs are refused, and an https
         link opens in the system browser. SetPage itself navigates to about:blank
-        (WebKit does so twice) or a data: URL, which stay allowed."""
+        (WebKit does so twice) or a data: URL, which stay allowed until the page is
+        ready; after that every navigation is a reload (F5) or Back, which would
+        leave the window blank, and is refused too."""
         url = event.GetURL() or ""
-        if not url.startswith(("http://", "https://", "file:")):
+        if not self.ready and not url.startswith(("http://", "https://", "file:")):
             return
         event.Veto()
         if url.startswith("https://"):

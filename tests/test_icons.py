@@ -41,6 +41,21 @@ def test_centre_line_is_white():
     assert pixel(64, 0.5, 0.5) == (255, 255, 255, 255)
 
 
+def test_the_outer_ring_is_white():
+    assert pixel(64, 0.5, 0.2045) == (255, 255, 255, 255)  # its top: (11, 4.5) of 22
+
+
+def test_the_inner_ring_is_three_quarters_white():
+    r, g, b, a = pixel(64, 0.6, 0.3045)  # its top: (13.2, 6.7) of 22, opacity .75
+    assert a == 255
+    for got, blue in zip((r, g, b), (0x25, 0x63, 0xEB)):
+        assert abs(got - (0.75 * 255 + 0.25 * blue)) <= 6
+
+
+def test_inside_the_rings_is_the_field():
+    assert pixel(64, 0.35, 0.35) == (0x25, 0x63, 0xEB, 255)
+
+
 def test_every_icon_is_the_logo():
     for path, _size, shapes in M.targets():
         assert shapes == M.logo_shapes(), path

@@ -153,6 +153,13 @@ def archive_files(root: Path = ROOT) -> list:
         files.append((name, root / name))
     for name, source in ARCHIVE_EXTRA.items():
         files.append((name, root / source))
+    names = [name for name, _ in files]
+    twice = sorted({name for name in names if names.count(name) > 1})
+    if twice:
+        raise ReleaseError(f"Two files would go into the archive as {', '.join(twice)}.")
+    missing = [path.relative_to(root).as_posix() for _, path in files if not path.is_file()]
+    if missing:
+        raise ReleaseError(f"The archive needs {', '.join(missing)}, which does not exist.")
     return sorted(files)
 
 
