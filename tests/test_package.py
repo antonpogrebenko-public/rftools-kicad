@@ -86,6 +86,11 @@ def test_metadata_is_the_ipc_plugin_for_kicad_10_at_the_package_version():
     assert not [k for k in version if k.startswith("download_") or k == "install_size"]
 
 
+def test_documentation_link_is_the_kicad_page():
+    meta = load(ROOT / "metadata.json")
+    assert meta["resources"]["documentation"] == "https://rftools.io/docs/api/kicad/"
+
+
 def test_the_pcm_icon_is_64_by_64():
     assert png_size(ROOT / "resources" / "icon.png") == (64, 64)
 
