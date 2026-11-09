@@ -27,7 +27,7 @@ anything else.
 """
 from __future__ import annotations
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 #: The plugin's identifier: plugin.json, metadata.json and the key's client label.
 IDENTIFIER = "io.rftools.kicad"

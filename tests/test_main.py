@@ -168,7 +168,7 @@ def test_run_reads_the_board_and_hands_plain_data_to_the_presenter(tmp_path):
         "USB", 180000, 180000, 150000, 200000, 600000, 300000,
     )
     services = received["services"]
-    assert services.board is board and services.version == "0.4.0"
+    assert services.board is board and services.version == "0.4.1"
     assert services.key_url.endswith("client=kicad-plugin")
     assert services.cache.path.name == "results.json"
     assert not services.has_key
