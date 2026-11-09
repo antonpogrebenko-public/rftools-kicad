@@ -80,7 +80,7 @@ def test_metadata_is_the_ipc_plugin_for_kicad_10_at_the_package_version():
     assert meta["type"] == "plugin" and meta["license"] == "MIT"
     assert len(meta["description"]) <= 150  # the PCM's documented limit
     [version] = meta["versions"]
-    assert version["version"] == rftools_kicad.__version__ == "0.2.0"
+    assert version["version"] == rftools_kicad.__version__ == "0.3.0"
     assert version["kicad_version"] == "10.0" and version["runtime"] == "ipc"
     # download_* belong only in the repository's copy, never in the archive's.
     assert not [k for k in version if k.startswith("download_") or k == "install_size"]

@@ -86,7 +86,7 @@ def test_usage_is_a_get_with_no_body(service):
 def test_the_default_service_is_rftools_io_over_https():
     client = C.Client(KEY)
     assert client.base_url == C.DEFAULT_BASE_URL == "https://rftools.io/api/py/v1"
-    assert C.USER_AGENT == "rftools-kicad/0.2.0"
+    assert C.USER_AGENT == "rftools-kicad/0.3.0"
 
 
 def test_the_key_is_never_sent_over_plain_http_to_another_host():
