@@ -10,6 +10,8 @@ A KiCad 10 plugin that reads the open board's stackup and net classes and works 
   - the **IPC-2152 Fig. 5-1** width, the chart IPC-2152 recommends when nothing else about the board is known: the conservative width for any conductor, not IPC-2221's chart scaled by a factor;
 - via impedance, capacitance, inductance and current capacity.
 
+![The plugin's results in KiCad: impedance, target widths and gaps, and a width for a current, each with its formula reference and engine version](docs/images/kicad-plugin-results-dark.png)
+
 Each number is the one the rftools.io web calculators give for the same inputs. Each is shown with its formula reference, whether its inputs are inside the calculator's valid range, and the engine version that computed it. If you ask, the plugin writes the suggested widths and gaps into your net classes. It shows you every change first, and each write can be undone. On KiCad 10.0.6 and earlier it lists the values for you to enter by hand instead (see [Writing widths to net classes](#writing-widths-to-net-classes)).
 
 ## Requirements
@@ -20,6 +22,7 @@ Each number is the one the rftools.io web calculators give for the same inputs. 
   - **Linux:** the system `python3` also needs your distribution's `python3-venv` and `python3-wxgtk4.0` packages (Debian and Ubuntu names):
     - Without `python3-venv`, KiCad builds the plugin's environment with no pip, so the plugin's libraries never install and the plugin never loads. Install `python3-venv`, delete the plugin's environment folder (see below), and restart KiCad.
     - Without `python3-wxgtk4.0`, the plugin opens a read-only report in your browser instead of its dialog (see [Without the dialog](#without-the-dialog)).
+    - For the window in rftools.io's design, also install `python3-wxgtk-webview4.0`. Without it the plugin opens the same window with your desktop's own controls.
   - **If you changed Preferences › Plugins › Python Interpreter,** set it back to KiCad's own Python: click **Detect Automatically** beside it, which picks KiCad's bundled Python on macOS and Windows and the system `python3` on Linux. On macOS no other Python can run KiCad plugins, because KiCad passes its own Python settings (`PYTHONHOME` and `PYTHONPATH`) to the interpreter it starts, so a different one stops at start-up and the plugin's environment stays empty.
 - **After changing the interpreter, rebuild the plugin's environment.** KiCad 10.0.6 does not rebuild it on its own. Right-click the plugin in Preferences › Plugins › Action Plugins and choose **Recreate Plugin Environment**, or delete the environment folder, then restart KiCad. The folder is:
 
@@ -66,9 +69,11 @@ The `RFTOOLS_API_KEY` environment variable, if set, is used instead of the saved
 
 ## Using it
 
-The dialog has three tabs.
+The window has three steps, in rftools.io's design. Where KiCad's Python cannot show a web page (Linux without `python3-wxgtk-webview4.0`), the plugin opens the same window with your desktop's own controls, where the steps are tabs and the switches are tick boxes.
 
-1. **Layer model.** Review the structure the plugin proposes for each copper layer: microstrip on the outer layers, stripline between planes on the inner layers, with the heights and εr it read. Where two or more dielectric plies lie between a trace and its plane, it adds their heights and takes their thickness-weighted εr, and says so. KiCad does not say which copper layers are planes, so at first every copper layer is treated as a plane for its neighbours. Untick the signal layers to set the planes yourself. Until you do, the board-specific width for a current credits no plane. The model is worked out again at once. Nothing is computed until you run.
+![The layer model: the board's stackup drawn as a cross-section beside the copper layers and their plane switches](docs/images/kicad-plugin-layers-dark.png)
+
+1. **Layer model.** Review the structure the plugin proposes for each copper layer: microstrip on the outer layers, stripline between planes on the inner layers, with the heights and εr it read. Where two or more dielectric plies lie between a trace and its plane, it adds their heights and takes their thickness-weighted εr, and says so. KiCad does not say which copper layers are planes, so at first every copper layer is treated as a plane for its neighbours. Switch off the signal layers' plane switches to set the planes yourself. Until you do, the board-specific width for a current credits no plane. The model is worked out again at once. Nothing is computed until you run.
 2. **Net classes.** Tick the classes to compute. For each class you can enter:
    - a single-ended target (Ω);
    - a differential target (Ω);
@@ -198,6 +203,19 @@ python3 -m venv .venv          # any Python from 3.9; CI tests 3.9, 3.11, 3.12 a
 ```
 
 To test on the interpreter macOS users have, make a scratch environment from KiCad's bundled Python the way KiCad does, with its wx: `/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3 -m venv --system-site-packages /tmp/kicad39`, then install the same packages into it and run the tests with `PYTHONNOUSERSITE=1`. Never install into the bundled interpreter itself. The API client's tests run against a local HTTP server, so the suite makes no call to rftools.io.
+
+The window's design is rftools.io's own:
+- `plugins/rftools_kicad/ui/tokens.css` and `logo.svg` are copied from the site by `scripts/vendor_design.py`.
+- The fonts are in `ui/fonts/`, with their licences.
+- `webui.py` renders the window and the report, and `webdialog.py` shows them in KiCad.
+
+Beside the monorepo, these checks must all pass before a release, since the plugin's CI cannot run them:
+- `python3 scripts/vendor_design.py --check`
+- `python3 scripts/vendor_golden.py --check`
+- `python3.12 scripts/extract_calculators.py --check`
+- `python3 scripts/make_icons.py --check`
+
+The screenshots in `docs/images/` come from `python3.12 scripts/export_demo_pages.py DIR`, which uses the site's own calculators. The monorepo's `scripts/kicad_plugin_screenshots.mjs` then photographs those pages.
 
 To release, set the version in `metadata.json` and `plugins/rftools_kicad/__init__.py`, commit, and push a `v<version>` tag. `.github/workflows/release.yml` then checks the versions and runs CI and the live golden cases. It builds the archive, creates the GitHub release, and publishes the PCM repository to GitHub Pages.
 
