@@ -2,7 +2,7 @@
     "$schema": "https://go.kicad.org/api/schemas/v1",
     "identifier": "io.rftools.kicad",
     "name": "rftools.io board calculations",
-    "description": "Reads the board's stackup and net classes and computes microstrip, stripline and differential impedance, the width or gap for a target impedance, the IPC-2152 width for a current, and via figures through the rftools.io API.",
+    "description": "Reads the board's stackup and net classes and computes microstrip, stripline and differential impedance, the width or gap for a target impedance, the width for a current (board-specific, or IPC-2152 Fig. 5-1 outside the thermal model's range), and via figures through the rftools.io API.",
     "runtime": {
         "type": "python",
         "min_version": "3.9"

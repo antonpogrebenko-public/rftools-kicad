@@ -46,30 +46,76 @@ def test_every_icon_is_the_logo():
         assert shapes == M.logo_shapes(), path
 
 
-def _attrs(tag: str) -> dict:
-    return dict(re.findall(r'(\w+)="([^"]*)"', tag))
+FRONTEND = ROOT.parent / "frontend"
 
 
-@pytest.mark.skipif(not LOGOMARK.is_file(), reason="monorepo not present")
+def _attrs(body: str) -> dict:
+    return dict(re.findall(r'(\w+)="([^"]*)"', body))
+
+
+def _same(a, b) -> bool:
+    try:
+        return float(a) == float(b)
+    except (TypeError, ValueError):
+        return str(a).lower() == str(b).lower()
+
+
+def expected_elements() -> list:
+    """LogoMark.tsx's elements as LOGO describes them, every attribute included."""
+    rect, line = M.LOGO["rect"], M.LOGO["line"]
+    elements = [("rect", {"width": rect["size"], "height": rect["size"], "rx": rect["rx"],
+                          "fill": rect["fill"]})]
+    for ring in M.LOGO["rings"]:
+        attrs = {"cx": ring["cx"], "cy": ring["cy"], "r": ring["r"], "fill": "none",
+                 "stroke": ring["colour"], "strokeWidth": ring["stroke"]}
+        if ring["opacity"] != 1:
+            attrs["opacity"] = ring["opacity"]
+        elements.append(("circle", attrs))
+    d = "M{:g} {:g}h{:g}".format(line["x0"], line["y"], line["x1"] - line["x0"])
+    elements.append(("path", {"d": d, "stroke": line["colour"], "strokeWidth": line["stroke"]}))
+    return elements
+
+
+def logomark_mismatches(source: str) -> list:
+    """How LogoMark.tsx's drawing differs from LOGO: element order, attributes, values."""
+    svg = re.search(r"<svg[^>]*>(.*?)</svg>", source, re.S)
+    if not svg:
+        return ["no <svg> element"]
+    found = [(tag, _attrs(body)) for tag, body in re.findall(r"<(\w+)\b([^>]*?)/?>", svg.group(1))]
+    expected = expected_elements()
+    if [tag for tag, _ in found] != [tag for tag, _ in expected]:
+        return [f"elements {[t for t, _ in found]} != {[t for t, _ in expected]}"]
+    problems = []
+    for (tag, have), (_, want) in zip(found, expected):
+        if set(have) != set(want):
+            problems.append(f"<{tag}> attributes {sorted(have)} != {sorted(want)}")
+            continue
+        problems += [
+            f"<{tag}> {k}={have[k]!r} != {want[k]!r}"
+            for k in want if not _same(have[k], want[k])
+        ]
+    return problems
+
+
+def _logomark_source() -> str:
+    if not FRONTEND.is_dir():
+        pytest.skip("monorepo not present")
+    assert LOGOMARK.is_file(), f"the site's logo moved: {LOGOMARK} is missing"
+    return LOGOMARK.read_text(encoding="utf-8")
+
+
 def test_geometry_matches_the_sites_logomark():
-    source = LOGOMARK.read_text(encoding="utf-8")
-    rect = _attrs(re.search(r"<rect [^>]*>", source).group(0))
-    assert float(rect["width"]) == float(rect["height"]) == M.LOGO["rect"]["size"]
-    assert float(rect["rx"]) == M.LOGO["rect"]["rx"]
-    assert rect["fill"].lower() == M.LOGO["rect"]["fill"]
+    assert logomark_mismatches(_logomark_source()) == []
 
-    circles = [_attrs(tag) for tag in re.findall(r"<circle [^>]*>", source)]
-    assert [
-        {
-            "cx": float(c["cx"]), "cy": float(c["cy"]), "r": float(c["r"]),
-            "stroke": float(c["strokeWidth"]), "opacity": float(c.get("opacity", "1")),
-        }
-        for c in circles
-    ] == M.LOGO["rings"]
 
-    path = _attrs(re.search(r"<path [^>]*>", source).group(0))
-    x0, y, dx = (float(v) for v in re.fullmatch(r"M([\d.]+) ([\d.]+)h([\d.]+)", path["d"]).groups())
-    line = M.LOGO["line"]
-    assert (x0, x0 + dx, y, float(path["strokeWidth"])) == (
-        line["x0"], line["x1"], line["y"], line["stroke"]
-    )
+@pytest.mark.parametrize("old, new", [
+    ('stroke="#fff" strokeWidth="1.4"', 'stroke="#f59e0b" strokeWidth="1.4"'),  # amber ring
+    ('<path d=', '<path strokeLinecap="round" d='),  # round line caps
+    ("</svg>", '<line x1="0" y1="0" x2="1" y2="1" /></svg>'),  # an extra element
+    ('cy="11" r="4.3" fill="none"', 'cy="11" r="4.3" fill="#fff"'),  # a filled ring
+])
+def test_a_changed_logomark_is_caught(old, new):
+    source = _logomark_source()
+    mutated = source.replace(old, new, 1)
+    assert mutated != source, f"mutation {old!r} did not apply"
+    assert logomark_mismatches(mutated)

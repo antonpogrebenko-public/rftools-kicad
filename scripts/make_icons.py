@@ -26,8 +26,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SUPERSAMPLE = 8
 
-WHITE = (0xFF, 0xFF, 0xFF)
-
 #: The rftools.io logo mark in the site's own units (LogoMark.tsx, viewBox 22):
 #: a blue rounded square, two white rings (the second at 75 % opacity) and a
 #: white line across the middle, drawn in that order.
@@ -35,15 +33,17 @@ LOGO_VIEWBOX = 22
 LOGO = {
     "rect": {"size": 22, "rx": 5, "fill": "#2563eb"},
     "rings": [
-        {"cx": 11, "cy": 11, "r": 6.5, "stroke": 1.4, "opacity": 1.0},
-        {"cx": 13.2, "cy": 11, "r": 4.3, "stroke": 1.1, "opacity": 0.75},
+        {"cx": 11, "cy": 11, "r": 6.5, "stroke": 1.4, "colour": "#fff", "opacity": 1.0},
+        {"cx": 13.2, "cy": 11, "r": 4.3, "stroke": 1.1, "colour": "#fff", "opacity": 0.75},
     ],
-    "line": {"x0": 4.5, "x1": 17.5, "y": 11, "stroke": 1.1},
+    "line": {"x0": 4.5, "x1": 17.5, "y": 11, "stroke": 1.1, "colour": "#fff"},
 }
 
 
 def _rgb(hex_colour: str) -> tuple:
     value = hex_colour.lstrip("#")
+    if len(value) == 3:  # "#fff" is "#ffffff"
+        value = "".join(c * 2 for c in value)
     return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
 
 
@@ -54,10 +54,10 @@ def logo_shapes():
     shapes = [("rounded", (0.0, 0.0, 1.0, 1.0, rect["rx"] * u), _rgb(rect["fill"]), 1.0)]
     for ring in LOGO["rings"]:
         box = (ring["cx"] * u, ring["cy"] * u, ring["r"] * u, ring["stroke"] * u)
-        shapes.append(("ring", box, WHITE, ring["opacity"]))
+        shapes.append(("ring", box, _rgb(ring["colour"]), ring["opacity"]))
     half = line["stroke"] / 2  # an SVG line's butt caps end exactly at x0 and x1
     box = (line["x0"] * u, (line["y"] - half) * u, line["x1"] * u, (line["y"] + half) * u)
-    shapes.append(("rect", box, WHITE, 1.0))
+    shapes.append(("rect", box, _rgb(line["colour"]), 1.0))
     return shapes
 
 
