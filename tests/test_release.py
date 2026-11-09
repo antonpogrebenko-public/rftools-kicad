@@ -43,7 +43,8 @@ def copy_of_repo(tmp_path):
     for name in ("plugins", "resources", "pcm"):
         shutil.copytree(ROOT / name, root / name,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    shutil.copy(ROOT / "metadata.json", root / "metadata.json")
+    for name in ("metadata.json", "LICENSE", "NOTICE"):
+        shutil.copy(ROOT / name, root / name)
     return root
 
 
@@ -77,10 +78,15 @@ def test_the_archive_has_kicads_plugin_layout_and_nothing_else(built):
         if p.is_file() and "__pycache__" not in p.parts and not p.name.startswith(".")
         and p.suffix not in (".pyc", ".pyo")
     )
+    # LICENSE and NOTICE ship beside the plugin, so an installed copy carries them.
+    expected = sorted(expected + ["plugins/LICENSE", "plugins/NOTICE"])
     assert sorted(n for n in names if n.startswith("plugins/")) == expected
     assert not [n for n in names if "__pycache__" in n or n.endswith(".pyc")]
     # The metadata inside is the repository's, with no download fields.
     assert metadata == (ROOT / "metadata.json").read_bytes()
+    with zipfile.ZipFile(out / release["archive"]) as archive:
+        assert archive.read("plugins/LICENSE") == (ROOT / "LICENSE").read_bytes()
+        assert archive.read("plugins/NOTICE") == (ROOT / "NOTICE").read_bytes()
     assert b"download_" not in metadata
 
 

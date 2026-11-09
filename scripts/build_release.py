@@ -65,6 +65,10 @@ MAINTAINER = {"name": "rftools.io", "contact": {"web": "https://rftools.io"}}
 #: What the archive holds, relative to the repository root.
 ARCHIVE_DIRS = ("plugins", "resources")
 ARCHIVE_FILES = ("metadata.json",)
+#: Repository files packaged under another name (archive name -> repository path):
+#: the licence and the name-and-logo notice ship beside the plugin, so an
+#: installed copy carries them (KiCad extracts plugins/ as the plugin directory).
+ARCHIVE_EXTRA = {"plugins/LICENSE": "LICENSE", "plugins/NOTICE": "NOTICE"}
 #: Never packaged: caches, editor and OS litter, hidden files.
 EXCLUDED_PARTS = {"__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"}
 EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".orig", ".rej", ".swp"}
@@ -147,6 +151,8 @@ def archive_files(root: Path = ROOT) -> list:
             files.append((relative.as_posix(), path))
     for name in ARCHIVE_FILES:
         files.append((name, root / name))
+    for name, source in ARCHIVE_EXTRA.items():
+        files.append((name, root / source))
     return sorted(files)
 
 

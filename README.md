@@ -204,3 +204,5 @@ To release, set the version in `metadata.json` and `plugins/rftools_kicad/__init
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The rftools.io name and logo are not licensed for use as your own mark: see [NOTICE](NOTICE).
