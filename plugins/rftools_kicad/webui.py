@@ -103,9 +103,11 @@ def page(
     controls: bool = True,
     notes: Sequence[str] = (),
     budget_line: str | None = None,
+    intro: str = "",
 ) -> str:
     """The whole document: *theme* is "light", "dark" or "auto" (the system's)."""
-    regions = render_regions(session, controls=controls, notes=notes, budget_line=budget_line)
+    regions = render_regions(session, controls=controls, notes=notes, budget_line=budget_line,
+                             intro=intro)
     body_class = "" if controls else ' class="doc"'
     parts = [
         "<!doctype html>",
@@ -131,6 +133,7 @@ def render_regions(
     controls: bool = True,
     notes: Sequence[str] = (),
     budget_line: str | None = None,
+    intro: str = "",
 ) -> dict[str, str]:
     """The inner HTML of each region in :data:`REGIONS`."""
     state = session.state
@@ -139,7 +142,7 @@ def render_regions(
             session, controls=True
         )
     else:
-        main = _report_main(session, notes, budget_line)
+        main = _report_main(session, notes, budget_line, intro)
     regions = {
         "header": _header(session, controls),
         "main": main,
@@ -412,6 +415,8 @@ def _results(session: Session, controls: bool) -> str:
     else:
         body = '<div class="cards">' + "".join(_card(row) for row in state.results) + "</div>"
     refusals = "".join(f'<div class="callout warn">{e(r)}</div>' for r in state.refusals)
+    if refusals:
+        refusals = '<div class="head"><h2>Refusals</h2></div>' + refusals
     return head + stale + body + refusals
 
 
@@ -601,12 +606,16 @@ def _preview_panel(session: Session) -> str:
 # ── The browser report ───────────────────────────────────────────────────────
 
 
-def _report_main(session: Session, notes: Sequence[str], budget_line: str | None) -> str:
+def _report_main(
+    session: Session, notes: Sequence[str], budget_line: str | None, intro: str = ""
+) -> str:
     state = session.state
     parts = [
         f'<div class="head"><h1>{e(TITLE)}</h1><p>Plugin {e(__version__)}. '
         f"{e(state.key_status())}</p></div>"
     ]
+    if intro:
+        parts.append(f'<p class="note">{e(intro)}</p>')
     parts += [f'<div class="callout warn">{e(n)}</div>' for n in notes]
     parts.append(_layers(session, controls=False))
     parts.append('<div class="head"><h2>Net classes</h2></div>')

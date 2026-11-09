@@ -17,7 +17,6 @@ only what the result cache already holds is shown, and the page says so.
 """
 from __future__ import annotations
 
-import html
 import os
 import sys
 import tempfile
@@ -25,12 +24,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from rftools_kicad import __version__
-from rftools_kicad.dialog_logic import COLUMNS, DialogState
-from rftools_kicad.settings import redact, settings_path
+from rftools_kicad.dialog_logic import DialogState
+from rftools_kicad.settings import settings_path
 
 TITLE = "rftools.io board calculations"
-PRIVACY_URL = "https://rftools.io/privacy/"
 
 FULL_DIALOG = (
     "This is the report view: the plugin's dialog needs wxPython, which this Python "
@@ -43,21 +40,6 @@ FULL_DIALOG = (
     "Preferences › Plugins › Action Plugins and choose Recreate Plugin Environment, "
     "which installs wxPython with the plugin."
 )
-
-_STYLE = """
-:root{--fg:#1b1f24;--muted:#57606a;--line:#d0d7de;--bg:#fff;--warn:#9a3412;--ok:#116329}
-@media (prefers-color-scheme:dark){:root{--fg:#e6edf3;--muted:#9da7b3;--line:#3d444d;
---bg:#0d1117;--warn:#f0883e;--ok:#56d364}}
-body{font:15px/1.5 system-ui,sans-serif;color:var(--fg);background:var(--bg);
-max-width:72em;margin:2em auto;padding:0 1em}
-h1{font-size:1.5em}h2{font-size:1.15em;margin-top:2em}
-table{border-collapse:collapse;width:100%;margin:.5em 0;font-size:.92em}
-th,td{border-bottom:1px solid var(--line);padding:.3em .5em;text-align:left;vertical-align:top}
-th{color:var(--muted);font-weight:600}
-.note,.muted{color:var(--muted)}.warn{color:var(--warn)}.ok{color:var(--ok)}
-.scroll{overflow-x:auto}
-"""
-
 
 def present(
     model: Any,
@@ -114,72 +96,13 @@ def run_defaults(state: DialogState) -> tuple:
 
 
 def render(state: DialogState, notes: list | tuple = (), budget_line: str | None = None) -> str:
-    """The report page: layer model, planned calculations, results, refusals. No controls."""
-    e = html.escape
-    parts = [
-        "<!doctype html>",
-        '<html lang="en"><head><meta charset="utf-8">',
-        '<meta name="viewport" content="width=device-width,initial-scale=1">',
-        f"<title>{e(TITLE)}</title><style>{_STYLE}</style></head><body>",
-        f"<h1>{e(TITLE)}</h1>",
-        f'<p class="muted">Plugin {e(__version__)}. {e(state.key_status())}</p>',
-        f'<p class="note">{e(FULL_DIALOG)}</p>',
-    ]
-    for note in notes:
-        parts.append(f'<p class="warn">{e(note)}</p>')
+    """The report page in rftools.io's design: layer model, planned calculations,
+    results, refusals. No script and no control (webui with controls=False)."""
+    from rftools_kicad import webui
 
-    parts.append("<h2>Layer model</h2>")
-    parts.append(f'<p class="note">{e(state.plane_source_text())}</p>')
-    parts.append(_table(
-        ("Copper layer", "Plane", "Computed as"),
-        [(r.name, "yes" if r.plane else "no", r.text) for r in state.layer_rows()],
-    ))
-    problems = state.problems()
-    if problems:
-        parts.append('<ul class="warn">' + "".join(f"<li>{e(p)}</li>" for p in problems)
-                     + "</ul>")
-
-    parts.append("<h2>Net classes</h2>")
-    parts.append(_table(
-        ("Net class", "Track width", "Diff pair width / gap", "Clearance", "Via pad / drill"),
-        [(
-            nc.name, _mm(nc.track_width_nm),
-            f"{_mm(nc.diff_pair_width_nm)} / {_mm(nc.diff_pair_gap_nm)}",
-            _mm(nc.clearance_nm), f"{_mm(nc.via_diameter_nm)} / {_mm(nc.via_drill_nm)}",
-        ) for nc in state.netclasses],
-    ))
-
-    parts.append("<h2>Planned calculations</h2>")
-    parts.append(f"<p>{e(budget_line or state.budget_line())}</p>")
-    parts.append(
-        '<p class="note">Sent to rftools.io for each: the calculator and these numbers, '
-        "never the board, its names or the project.</p>"
-    )
-    parts.append(_table(
-        ("Net class", "Layer", "Figure", "Calculator", "Inputs"), state.planned_rows()
-    ))
-
-    parts.append("<h2>Results</h2>")
-    if state.results:
-        rows = []
-        for row in state.results:
-            rows.append(row.cells() + (row.note,))
-        parts.append(_table(COLUMNS + ("Note",), rows))
-    else:
-        parts.append('<p class="note">Nothing was computed.</p>')
-    if state.refusals:
-        parts.append("<h2>Refusals</h2>")
-        parts.append('<ul class="warn">' + "".join(
-            f"<li>{e(r)}</li>" for r in state.refusals
-        ) + "</ul>")
-
-    parts.append(
-        '<p class="muted">Nothing was written to the board or the project. Privacy: '
-        f'<a href="{e(PRIVACY_URL)}">{e(PRIVACY_URL)}</a></p>'
-    )
-    parts.append("</body></html>\n")
-    # A key must never reach the page, whatever a message carried.
-    return redact("\n".join(parts), (state.services.settings.api_key,))
+    session = webui.Session(state)
+    return webui.page(session, theme="auto", controls=False, notes=notes,
+                      budget_line=budget_line, intro=FULL_DIALOG)
 
 
 def write_report(text: str, directory: str | None = None) -> str:
@@ -189,18 +112,3 @@ def write_report(text: str, directory: str | None = None) -> str:
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         fh.write(text)
     return path
-
-
-def _table(head: tuple, rows: list) -> str:
-    e = html.escape
-    out = ['<div class="scroll"><table><thead><tr>']
-    out += [f"<th>{e(str(h))}</th>" for h in head]
-    out.append("</tr></thead><tbody>")
-    for row in rows:
-        out.append("<tr>" + "".join(f"<td>{e(str(cell))}</td>" for cell in row) + "</tr>")
-    out.append("</tbody></table></div>")
-    return "".join(out)
-
-
-def _mm(nm: int | None) -> str:
-    return "not set" if nm is None else f"{nm / 1e6:g} mm"

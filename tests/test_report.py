@@ -217,7 +217,8 @@ def test_a_current_shows_both_widths_each_with_its_method(tmp_path):
     assert not CONTROLS & set(parse(page).tags)
     text = " ".join(parse(page).text)
     assert "Width for 2 A" in text
-    assert "0.5423 mm, rftools thermal model (board-specific)" in text
+    # The card shows the value large and its method beneath (site-design 5.2).
+    assert "0.5423 mm" in text and "rftools thermal model (board-specific)" in text
     assert "rftools thermal model (board-specific): 0.5423 mm for this board" in text
     assert "IPC-2152 Fig. 5-1: 2.0329 mm, the conservative chart for any conductor" in text
     assert "IPC-2152 rftools" not in text and "IPC-2152 thermal" not in text
@@ -227,3 +228,10 @@ def test_main_falls_back_to_the_report_when_wx_cannot_load(monkeypatch):
     monkeypatch.setitem(sys.modules, "wx", None)  # import wx fails
     monkeypatch.delitem(sys.modules, "rftools_kicad.dialog", raising=False)
     assert M.presenter() is R.present
+
+
+def test_report_uses_the_site_tokens(tmp_path):
+    page = make_report(tmp_path, services_for(tmp_path))
+    assert "--background: #0b0d10;" in page and "--background: #f5f6f8;" in page
+    assert '"Instrument Sans"' in page and '"IBM Plex Mono"' in page
+    assert 'data-theme="auto"' in page and '<symbol id="rf-mark"' in page
