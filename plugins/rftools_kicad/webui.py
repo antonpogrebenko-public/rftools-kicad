@@ -22,7 +22,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from rftools_kicad import __version__
 from rftools_kicad.dialog_logic import (
@@ -644,3 +644,214 @@ def _simple_table(head: Sequence[str], rows: Sequence[Sequence[Any]]) -> str:
 
 def _mm(nm: int | None) -> str:
     return "not set" if nm is None else f"{nm / 1e6:g} mm"
+
+
+# ── Actions: what the page posts back (task 5.3) ─────────────────────────────
+
+
+class UiPort(Protocol):
+    """What the window does for an action: the browser, the clipboard, closing."""
+
+    def open_url(self, url: str) -> bool: ...
+
+    def copy(self, text: str) -> bool: ...
+
+    def close(self) -> None: ...
+
+    def progress(self, done: int, count: int, label: str) -> None: ...
+
+
+@dataclass(frozen=True)
+class Update:
+    """The regions to render again after an action, and whether to close."""
+
+    regions: tuple = ()
+    close: bool = False
+
+
+ALL = REGIONS
+_FORM_BOOLS = ("selected", "single_ended", "via")
+_FORM_TEXTS = ("impedance_target", "diff_target", "cpw_gap", "current", "layer")
+
+
+def start(state: DialogState) -> Session:
+    """The window as it opens: on the layer model, with the key panel if there is no key."""
+    return Session(state, panel=None if state.has_key else "key")
+
+
+def handle(session: Session, message: Any, ui: UiPort) -> Update:
+    """Do what the page asked, through the same DialogState calls as dialog.py."""
+    action = _ACTIONS.get(str(message.get("action") or ""))
+    return action(session, message, ui) if action else Update(())
+
+
+def _notice(session: Session, text: str, error: bool = False) -> Update:
+    session.panel, session.notice, session.notice_error = "notice", text, error
+    session.preview = None
+    return Update(("header", "footer", "panel"))
+
+
+def _step(session: Session, message: Any, ui: UiPort) -> Update:
+    step = str(message.get("step") or "")
+    if step not in STEPS:
+        return Update(())
+    session.step, session.panel = step, None
+    return Update(ALL)
+
+
+def _plane(session: Session, message: Any, ui: UiPort) -> Update:
+    layer = str(message.get("layer") or "")
+    if layer not in session.state.model.copper_names():
+        return Update(())
+    session.state.set_plane(layer, str(message.get("plane")) in ("1", "true", "True"))
+    return Update(("main", "footer"))
+
+
+def _reset_planes(session: Session, message: Any, ui: UiPort) -> Update:
+    session.state.reset_planes()
+    return Update(("main", "footer"))
+
+
+def _form(session: Session, message: Any, ui: UiPort) -> Update:
+    """A field of the class form; the browser shows the value already, so main stays."""
+    state, name, field = session.state, str(message.get("name")), str(message.get("field"))
+    if name not in state.forms:
+        return Update(())
+    value = message.get("value")
+    if field in _FORM_BOOLS:
+        state.set_form(name, **{field: bool(value)})
+    elif field in _FORM_TEXTS:
+        state.set_form(name, **{field: "" if value is None else str(value)})
+    elif field == "extra_layers":
+        layers = state.trace_layers()
+        state.set_form(name, extra_layers=tuple(x for x in (value or ()) if x in layers))
+    else:
+        return Update(())
+    return Update(("footer",))
+
+
+def _mask(session: Session, message: Any, ui: UiPort) -> Update:
+    session.state.solder_mask_cover = bool(message.get("on"))
+    return Update(("footer",))
+
+
+def _grid(session: Session, message: Any, ui: UiPort) -> Update:
+    session.state.grid_text = str(message.get("text") or "")
+    return Update(("footer",))
+
+
+def _run(session: Session, message: Any, ui: UiPort) -> Update:
+    """dialog.on_run's first half: the free usage read, then the check."""
+    state = session.state
+    state.refresh_usage()
+    ok, text = state.run_check()
+    if not ok:
+        return _notice(session, text)
+    session.panel, session.notice, session.notice_error = "confirm_run", text, False
+    return Update(("header", "footer", "panel"))
+
+
+def _run_confirmed(session: Session, message: Any, ui: UiPort) -> Update:
+    summary = session.state.run(lambda done, count, label: ui.progress(done, count, label or ""))
+    session.step, session.panel, session.notice = "results", None, ""
+    if summary.message:
+        _notice(session, summary.message, error=True)
+    return Update(ALL)
+
+
+def _key(session: Session, message: Any, ui: UiPort) -> Update:
+    session.panel, session.notice, session.notice_error = "key", "", False
+    return Update(("panel",))
+
+
+def _get_key(session: Session, message: Any, ui: UiPort) -> Update:
+    """dialog.on_get_key: open the key link; when no browser opens, copy it."""
+    url = session.state.services.key_url
+    if ui.open_url(url):
+        return Update(())
+    how = ("It is copied to the clipboard; paste it into your browser." if ui.copy(url)
+           else "Copy it into your browser.")
+    session.panel, session.notice_error = "key", False
+    session.notice = f"Your browser could not be opened from KiCad. {url} {how}"
+    return Update(("panel",))
+
+
+def _save_key(session: Session, message: Any, ui: UiPort) -> Update:
+    saved, text = session.state.save_key(str(message.get("text") or ""))
+    session.panel, session.notice, session.notice_error = "key", text, not saved
+    return Update(("header", "footer", "panel"))
+
+
+def _check_allowance(session: Session, message: Any, ui: UiPort) -> Update:
+    session.state.refresh_usage()
+    return Update(("header", "footer", "panel"))
+
+
+def _show_preview(session: Session, preview: Any, reason: Any, panel: str) -> Update:
+    """dialog._preview: a reason, the values to enter by hand, or the write to confirm."""
+    if preview is None:
+        return _notice(session, reason or "")
+    session.preview, session.notice, session.notice_error = preview, "", False
+    session.panel = "values" if preview.manual else panel
+    return Update(("panel",))
+
+
+def _write(session: Session, message: Any, ui: UiPort) -> Update:
+    return _show_preview(session, *session.state.preview(), panel="write")
+
+
+def _restore(session: Session, message: Any, ui: UiPort) -> Update:
+    return _show_preview(session, *session.state.restore_preview(), panel="restore")
+
+
+def _confirm(session: Session, message: Any, ui: UiPort) -> Update:
+    """The user confirmed the preview the panel shows: state.apply, as dialog._write."""
+    from rftools_kicad import netclasses as N
+
+    preview = session.preview
+    if preview is None or preview.manual or session.panel not in ("write", "restore"):
+        return Update(())
+    result = session.state.apply(preview, lambda shown: shown is preview)
+    if result.cancelled:
+        session.panel, session.preview = None, None
+        return Update(("panel",))
+    _notice(session, result.message, error=not result.applied)
+    session.notice_error = result.status == N.STATUS_DAMAGED or not result.applied
+    return Update(ALL)
+
+
+def _copy_values(session: Session, message: Any, ui: UiPort) -> Update:
+    if session.preview is None or not session.preview.manual:
+        return Update(())
+    copied = ui.copy(session.preview.manual_text())
+    session.notice = "Copied." if copied else "The clipboard could not be opened."
+    return Update(("panel",))
+
+
+def _close_panel(session: Session, message: Any, ui: UiPort) -> Update:
+    session.panel, session.notice, session.notice_error, session.preview = None, "", False, None
+    return Update(("panel",))
+
+
+def _open(session: Session, message: Any, ui: UiPort) -> Update:
+    href = str(message.get("href") or "")
+    if href.startswith("https://"):
+        ui.open_url(href)
+    return Update(())
+
+
+def _close(session: Session, message: Any, ui: UiPort) -> Update:
+    ui.close()
+    return Update((), close=True)
+
+
+_ACTIONS = {
+    "ready": lambda session, message, ui: Update(()),
+    "step": _step, "plane": _plane, "reset_planes": _reset_planes,
+    "form": _form, "mask": _mask, "grid": _grid,
+    "run": _run, "run_confirmed": _run_confirmed,
+    "key": _key, "get_key": _get_key, "save_key": _save_key,
+    "check_allowance": _check_allowance,
+    "write": _write, "restore": _restore, "confirm": _confirm, "copy_values": _copy_values,
+    "close_panel": _close_panel, "open": _open, "close": _close,
+}
