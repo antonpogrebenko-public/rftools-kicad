@@ -327,7 +327,9 @@ def _classes(session: Session, controls: bool) -> str:
     state = session.state
     layers = state.trace_layers()
     mask = (
-        '<label class="check"><input type="checkbox" data-action="mask"'
+        '<label class="check" title="Computes outer layers with controlled-impedance under the '
+        "stackup's solder mask instead of as bare microstrip.\"><input type=\"checkbox\" "
+        'data-action="mask"'
         + (" checked" if state.solder_mask_cover else "")
         + "> Outer layers under their solder mask</label>"
     )
@@ -380,8 +382,9 @@ def _classes(session: Session, controls: bool) -> str:
     return (
         '<div class="head"><h1>Net classes</h1><p>Tick the classes to compute. A class is '
         "board-wide but an impedance width is per layer: the width written to a class is the "
-        "one for the layer it is routed on. Targets, gap and current are optional; each "
-        "computation is one API call, and repeats are answered from the cache for free.</p></div>"
+        "one for the layer it is routed on. Targets, gap and current are optional. A coplanar "
+        "gap computes outer layers as grounded coplanar waveguide. Each computation is one API "
+        "call; repeats are answered from the cache for free.</p></div>"
         f'<div class="panel form-row">{mask}{grid}</div>{table}'
     )
 
@@ -488,7 +491,9 @@ def _footer(session: Session, budget_line: str | None) -> str:
         disabled = "" if can_write else " disabled"
         buttons.append('<button type="button" class="btn" data-action="restore">'
                        f'{"Previous values…" if manual else "Restore…"}</button>')
-        buttons.append(f'<button type="button" class="btn" data-action="write"{disabled}>'
+        why = e(reason or "Preview the widths and gaps, then confirm.")
+        buttons.append(f'<button type="button" class="btn" data-action="write"{disabled} '
+                       f'title="{why}">'
                        f'{"Values for Board Setup…" if manual else "Write to net classes…"}'
                        "</button>")
         buttons.append('<button type="button" class="btn primary" data-action="run">'
@@ -511,11 +516,13 @@ def _panel(session: Session) -> str:
             "computed is answered from the cache, for free.</p></div>"
             '<div class="keyrow">'
             f'<button type="button" class="btn primary" data-action="get_key" '
-            f'data-href="{e(state.services.key_url)}">Get a free key ↗</button>'
+            f'data-href="{e(state.services.key_url)}" title="{e(state.services.key_url)}">'
+            "Get a free key ↗</button>"
             '<input type="password" id="key-field" autocomplete="off" '
             'placeholder="Paste your key · rfc_…" aria-label="API key">'
             '<button type="button" class="btn" data-action="save_key">Save key</button>'
-            '<button type="button" class="btn ghost" data-action="check_allowance">'
+            '<button type="button" class="btn ghost" data-action="check_allowance" '
+            'title="Reads the calls left this month. Reading it is free.">'
             "Check allowance</button></div>"
             + (f'<div class="keyrow"><span class="{_notice_class(session)}">'
                f"{e(session.notice)}</span></div>" if session.notice else "")
@@ -670,6 +677,8 @@ class UiPort(Protocol):
 
     def progress(self, done: int, count: int, label: str) -> None: ...
 
+    def progress_done(self) -> None: ...
+
 
 @dataclass(frozen=True)
 class Update:
@@ -711,7 +720,7 @@ def _step(session: Session, message: Any, ui: UiPort) -> Update:
 
 def _plane(session: Session, message: Any, ui: UiPort) -> Update:
     layer = str(message.get("layer") or "")
-    if layer not in session.state.model.copper_names():
+    if layer not in session.state.model.copper_names:
         return Update(())
     session.state.set_plane(layer, str(message.get("plane")) in ("1", "true", "True"))
     return Update(("main", "footer"))
@@ -732,6 +741,8 @@ def _form(session: Session, message: Any, ui: UiPort) -> Update:
         state.set_form(name, **{field: bool(value)})
     elif field in _FORM_TEXTS:
         state.set_form(name, **{field: "" if value is None else str(value)})
+        if field == "layer":  # a select, not typed in: its row's Also-on list changes
+            return Update(("main", "footer"))
     elif field == "extra_layers":
         layers = state.trace_layers()
         state.set_form(name, extra_layers=tuple(x for x in (value or ()) if x in layers))
@@ -755,6 +766,9 @@ def _run(session: Session, message: Any, ui: UiPort) -> Update:
     state = session.state
     state.refresh_usage()
     ok, text = state.run_check()
+    if not ok and not state.has_key:  # the key panel is where a key is set
+        session.panel, session.notice, session.notice_error = "key", text, False
+        return Update(("header", "footer", "panel"))
     if not ok:
         return _notice(session, text)
     session.panel, session.notice, session.notice_error = "confirm_run", text, False
@@ -762,11 +776,35 @@ def _run(session: Session, message: Any, ui: UiPort) -> Update:
 
 
 def _run_confirmed(session: Session, message: Any, ui: UiPort) -> Update:
-    summary = session.state.run(lambda done, count, label: ui.progress(done, count, label or ""))
+    """The run the confirmation panel offered; a second click finds no panel and does nothing."""
+    if session.panel != "confirm_run":
+        return Update(())
+    state = session.state
+    try:
+        summary = state.run(lambda done, count, label: ui.progress(done, count, label or ""))
+    except Exception as exc:  # a connection lost mid-run, for one
+        _notice(session, f"The run failed ({type(exc).__name__}: {exc}).", error=True)
+        return Update(ALL)
+    finally:
+        done = getattr(ui, "progress_done", None)
+        if callable(done):
+            done()
     session.step, session.panel, session.notice = "results", None, ""
-    if summary.message:
+    refused = _auth_refusal(state)
+    if refused:
+        session.panel, session.notice, session.notice_error = "key", refused, True
+    elif summary.message:
         _notice(session, summary.message, error=True)
     return Update(ALL)
+
+
+def _auth_refusal(state: DialogState) -> str:
+    """The message of a refusal for the key (401/403), from the run or the usage read."""
+    from rftools_kicad.api import AUTH
+
+    refusals = [r.refusal for r in state.results if getattr(r, "refusal", None) is not None]
+    refusals.append(state.usage_refusal)
+    return next((r.message for r in refusals if r is not None and r.kind == AUTH), "")
 
 
 def _key(session: Session, message: Any, ui: UiPort) -> Update:
@@ -787,13 +825,19 @@ def _get_key(session: Session, message: Any, ui: UiPort) -> Update:
 
 
 def _save_key(session: Session, message: Any, ui: UiPort) -> Update:
-    saved, text = session.state.save_key(str(message.get("text") or ""))
+    key = str(message.get("text") or "")
+    if session.panel != "key" or not key.strip():  # a double click posts an empty field
+        return Update(())
+    saved, text = session.state.save_key(key)
     session.panel, session.notice, session.notice_error = "key", text, not saved
     return Update(("header", "footer", "panel"))
 
 
 def _check_allowance(session: Session, message: Any, ui: UiPort) -> Update:
     session.state.refresh_usage()
+    refused = _auth_refusal(session.state)
+    if refused:
+        session.panel, session.notice, session.notice_error = "key", refused, True
     return Update(("header", "footer", "panel"))
 
 
@@ -851,8 +895,7 @@ def _open(session: Session, message: Any, ui: UiPort) -> Update:
 
 
 def _close(session: Session, message: Any, ui: UiPort) -> Update:
-    ui.close()
-    return Update((), close=True)
+    return Update((), close=True)  # the window ends its modal loop, once
 
 
 _ACTIONS = {

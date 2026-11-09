@@ -127,7 +127,10 @@ class WxUi:
                 style=wx.PD_APP_MODAL | wx.PD_AUTO_HIDE,
             )
         self._progress.Update(min(done, max(1, count)), label or " ")
-        if done >= count:
+
+    def progress_done(self) -> None:
+        """After the run, finished or failed: the progress dialog never outlives it."""
+        if self._progress is not None:
             self._progress.Destroy()
             self._progress = None
 
@@ -142,6 +145,8 @@ class WebDialog(wx.Dialog):
         self.ready = False
         self.ui = WxUi(self)
         self.view = html2.WebView.New(self, backend=backend)
+        if hasattr(self.view, "EnableContextMenu"):  # its Reload would blank the page
+            self.view.EnableContextMenu(False)
         if not self.view.AddScriptMessageHandler(HANDLER):
             raise RuntimeError("the web view refused the script message handler")
         self.view.Bind(html2.EVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, self.on_message)

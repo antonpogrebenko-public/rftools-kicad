@@ -23,6 +23,8 @@ Each number is the one the rftools.io web calculators give for the same inputs. 
     - Without `python3-venv`, KiCad builds the plugin's environment with no pip, so the plugin's libraries never install and the plugin never loads. Install `python3-venv`, delete the plugin's environment folder (see below), and restart KiCad.
     - Without `python3-wxgtk4.0`, the plugin opens a read-only report in your browser instead of its dialog (see [Without the dialog](#without-the-dialog)).
     - For the window in rftools.io's design, also install `python3-wxgtk-webview4.0`. Without it the plugin opens the same window with your desktop's own controls.
+  - **Windows:** the window in rftools.io's design uses Microsoft Edge WebView2, which Windows 10 and 11 normally have. Without it the plugin opens the same window with your desktop's own controls.
+  - **macOS:** nothing to add. The window uses the system's WebKit.
   - **If you changed Preferences › Plugins › Python Interpreter,** set it back to KiCad's own Python: click **Detect Automatically** beside it, which picks KiCad's bundled Python on macOS and Windows and the system `python3` on Linux. On macOS no other Python can run KiCad plugins, because KiCad passes its own Python settings (`PYTHONHOME` and `PYTHONPATH`) to the interpreter it starts, so a different one stops at start-up and the plugin's environment stays empty.
 - **After changing the interpreter, rebuild the plugin's environment.** KiCad 10.0.6 does not rebuild it on its own. Right-click the plugin in Preferences › Plugins › Action Plugins and choose **Recreate Plugin Environment**, or delete the environment folder, then restart KiCad. The folder is:
 

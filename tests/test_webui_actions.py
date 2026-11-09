@@ -23,6 +23,7 @@ class FakeUi:
         self.copied: list = []
         self.closed = False
         self.steps: list = []
+        self.finished = False
 
     def open_url(self, url):
         self.opened.append(url)
@@ -37,6 +38,9 @@ class FakeUi:
 
     def progress(self, done, count, label):
         self.steps.append((done, count))
+
+    def progress_done(self):
+        self.finished = True
 
 
 def project_state(tmp_path, version=FIXED_KICAD, **kwargs):
@@ -109,8 +113,8 @@ def test_first_run_opens_the_key_panel_without_locking(tmp_path):
     U.handle(session, {"action": "step", "step": "classes"}, ui)
     assert session.panel is None
     assert 'data-field="current"' in U.render_regions(session)["main"]
-    U.handle(session, {"action": "run"}, ui)  # running needs a key: said, not done
-    assert session.panel == "notice" and "API key" in session.notice
+    U.handle(session, {"action": "run"}, ui)  # running needs a key: the key panel says so
+    assert session.panel == "key" and "API key" in session.notice
 
 
 def test_open_goes_to_the_system_browser(tmp_path):
@@ -160,7 +164,8 @@ def test_close_and_unknown_actions(tmp_path):
     state, _ = project_state(tmp_path)
     session, ui = U.start(state), FakeUi()
     assert U.handle(session, {"action": "nonsense"}, ui) == U.Update(())
-    assert U.handle(session, {"action": "close"}, ui).close and ui.closed
+    # The window ends itself once on close=True; the action does not end it too.
+    assert U.handle(session, {"action": "close"}, ui).close and not ui.closed
 
 
 def test_the_window_page_carries_the_bridge(tmp_path):
@@ -182,3 +187,91 @@ def test_reply_turns_a_message_into_the_regions_to_update(tmp_path):
     assert U.reply(session, "not json", ui) == U.Reply()
     assert U.reply(session, '["a list"]', ui) == U.Reply()
     assert U.reply(session, '{"action": "close"}', ui).close
+
+
+# ── Release B review fixes ───────────────────────────────────────────────────
+
+
+def test_a_plane_switch_changes_the_planes(tmp_path):
+    state, _ = project_state(tmp_path)
+    session, ui = U.start(state), FakeUi()
+    assert "B.Cu" not in state.model.planes
+    update = U.handle(session, {"action": "plane", "layer": "B.Cu", "plane": "1"}, ui)
+    assert "B.Cu" in state.model.planes and {"main", "footer"} <= set(update.regions)
+    U.handle(session, {"action": "plane", "layer": "B.Cu", "plane": "0"}, ui)
+    assert "B.Cu" not in state.model.planes
+
+
+def test_an_invalid_key_opens_the_key_panel(tmp_path):
+    from tests.support import api_error
+
+    state, _ = project_state(tmp_path)
+    state.set_form("HighSpeed", selected=True)
+    session, ui = U.Session(state, step="classes"), FakeUi()
+    U.handle(session, {"action": "run"}, ui)
+    state.services.client.errors = [api_error("auth") for _ in range(4)]
+    U.handle(session, {"action": "run_confirmed"}, ui)
+    assert session.panel == "key" and session.notice_error and session.notice
+    assert "data-action=\"get_key\"" in U.render_regions(session)["panel"]
+
+    U.handle(session, {"action": "close_panel"}, ui)
+    state.services.client.usage_error = api_error("auth")
+    U.handle(session, {"action": "check_allowance"}, ui)
+    assert session.panel == "key" and session.notice_error
+
+
+def test_changing_the_routed_layer_renders_its_also_on_again(tmp_path):
+    state, _ = project_state(tmp_path)
+    session, ui = U.Session(state, step="classes"), FakeUi()
+    update = U.handle(session, {"action": "form", "name": "HighSpeed", "field": "layer",
+                                "value": "B.Cu"}, ui)
+    assert "main" in update.regions
+    main = U.render_regions(session)["main"]
+    row = main[main.index('data-name="HighSpeed"'):]
+    assert 'data-field="extra_layers" value="F.Cu"' in row.split("</tr>")[0]
+
+
+def test_a_failed_run_finishes_its_progress_and_says_so(tmp_path):
+    state, _ = project_state(tmp_path)
+    state.set_form("HighSpeed", selected=True)
+    session, ui = U.Session(state, step="classes"), FakeUi()
+    U.handle(session, {"action": "run"}, ui)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("connection lost")
+
+    state.run = broken
+    U.handle(session, {"action": "run_confirmed"}, ui)
+    assert ui.finished and session.panel == "notice" and session.notice_error
+    assert "connection lost" in session.notice
+
+
+def test_run_now_twice_runs_once_and_an_empty_save_does_nothing(tmp_path):
+    state, _ = project_state(tmp_path)
+    state.set_form("HighSpeed", selected=True)
+    session, ui = U.Session(state, step="classes"), FakeUi()
+    U.handle(session, {"action": "run"}, ui)
+    U.handle(session, {"action": "run_confirmed"}, ui)
+    calls = list(state.services.client.calls)
+    U.handle(session, {"action": "run_confirmed"}, ui)
+    assert state.services.client.calls == calls
+    U.handle(session, {"action": "key"}, ui)
+    session.notice = "Saved key rfc_TESTkey0."
+    U.handle(session, {"action": "save_key", "text": "  "}, ui)
+    assert session.notice == "Saved key rfc_TESTkey0."
+
+
+def test_the_native_windows_notes_are_in_the_page(tmp_path):
+    state = DialogState(layer_model(four_layer()), [NetClassValues("HS", track_width_nm=200000)],
+                        FakeServices(tmp_path))  # no project: the write is unavailable
+    classes = U.render_regions(U.Session(state, step="classes"))["main"]
+    assert "grounded coplanar waveguide" in classes
+    assert "instead of as bare microstrip" in classes  # the solder-mask tooltip
+    key = U.render_regions(U.Session(state, panel="key"))["panel"]
+    assert f'title="{state.services.key_url}"' in key.replace("&amp;", "&")
+    assert "Reading it is free." in key
+    state.set_form("HS", selected=True)
+    state.run()
+    footer = U.render_regions(U.Session(state, step="results"))["footer"]
+    mode, reason = state.write_mode()
+    assert mode is None and reason and U.e(reason) in footer
