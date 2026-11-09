@@ -166,7 +166,7 @@ def test_a_coplanar_gap_makes_outer_layers_grounded_cpw_and_leaves_inner_layers_
     solve = by[("F.Cu", FIGURE_WIDTH_FOR_TARGET)]
     assert solve.slug == COPLANAR and solve.solve_for == "traceWidth"
     assert solve.input_dict["gapWidth"] == 0.2
-    assert solve.search_range == (0.02, 10.0)  # coplanar-waveguide states no maximum width
+    assert solve.search_range is None  # coplanar-waveguide states a 10 mm maximum width
     assert by[("In2.Cu", FIGURE_IMPEDANCE)].slug == STRIPLINE
     assert by[("In2.Cu", FIGURE_WIDTH_FOR_TARGET)].slug == STRIPLINE
     assert not plan.problems

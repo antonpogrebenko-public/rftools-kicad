@@ -53,7 +53,8 @@
         "traceWidth": 2.781,
         "substrateHeight": 1.51,
         "dielectricConstant": 4.5,
-        "copperThickness": 35
+        "copperThickness": 35,
+        "frequency": 2.4
       },
       "solve": {
         "solveFor": "traceWidth",
@@ -68,7 +69,9 @@
       "outputs": {
         "impedance": 49.99705984469245,
         "effectiveDielectric": 3.3944336801230706,
-        "propagationDelay": 6.145581196647901
+        "propagationDelay": 6.145581196647901,
+        "guidedWavelength": 67.79939168226058,
+        "quarterWavelength": 16.949847920565144
       }
     },
     {
@@ -204,7 +207,8 @@
         "heightToNearPlane": 0.19,
         "heightToFarPlane": 0.45,
         "copperThickness": 17.5,
-        "dielectricConst": 4.4578125
+        "dielectricConst": 4.4578125,
+        "frequency": 2.4
       },
       "outputs": {
         "impedance": 56.20361778856675,
@@ -212,7 +216,9 @@
         "offsetPenalty": -8.436317165157247,
         "propagationDelay": 7.042716328236941,
         "planeSpacing": 0.6575,
-        "asymmetryRatio": 2.3684210526315788
+        "asymmetryRatio": 2.3684210526315788,
+        "guidedWavelength": 59.16277857111621,
+        "quarterWavelength": 14.790694642779053
       }
     },
     {
@@ -270,7 +276,8 @@
         "traceWidth": 0.5,
         "boardThickness": 1.6,
         "planeDistance": 0,
-        "planeCopperWeight": 0.5
+        "planeCopperWeight": 0.5,
+        "standard": 0
       },
       "outputs": {
         "width2221mm": 0.7814374629086279,
@@ -278,6 +285,9 @@
         "resistance": 0.10433004926108375,
         "voltageDrop": 0.2086600985221675,
         "powerDiss": 0.417320197044335,
+        "limitCurrent": 1.4468880626650513,
+        "limitPercent": 138.22769373853018,
+        "minTraceWidth": 0.7814374629086279,
         "inChartRange": 1,
         "widthBoardMm": 1.0239000172578194,
         "inModelRange": 1
@@ -375,7 +385,8 @@
         "traceWidth": 0.5,
         "boardThickness": 1.6,
         "planeDistance": 0.2,
-        "planeCopperWeight": 0.5
+        "planeCopperWeight": 0.5,
+        "standard": 0
       },
       "outputs": {
         "width2221mm": 0.7814374629086279,
@@ -383,6 +394,9 @@
         "resistance": 0.10433004926108375,
         "voltageDrop": 0.2086600985221675,
         "powerDiss": 0.417320197044335,
+        "limitCurrent": 1.4468880626650513,
+        "limitPercent": 138.22769373853018,
+        "minTraceWidth": 0.7814374629086279,
         "inChartRange": 1,
         "widthBoardMm": 0.5422602208519343,
         "inModelRange": 1

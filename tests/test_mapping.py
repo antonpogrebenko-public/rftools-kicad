@@ -26,6 +26,7 @@ def test_outer_layer_is_bare_microstrip():
     assert c.inputs == (
         ("traceWidth", 0.3), ("substrateHeight", 1.51),
         ("dielectricConstant", 4.5), ("copperThickness", 35.0),
+        ("frequency", 2.4),  # read by no impedance: the calculator's default
     )
 
 
@@ -35,7 +36,7 @@ def test_outer_layer_under_solder_mask_uses_controlled_impedance_embedded():
     assert c.slug == "controlled-impedance"
     assert c.input_dict == {
         "traceType": 1, "traceWidth": 0.35, "substrateHeight": 0.2, "dielectricConst": 4.4,
-        "copperThickness": 35.0, "coverHeight": 0.01, "coverDielectric": 3.3,
+        "copperThickness": 35.0, "coverHeight": 0.01, "coverDielectric": 3.3, "frequency": 2.4,
     }
 
 
@@ -53,7 +54,7 @@ def test_inner_layer_is_asymmetric_stripline_near_and_far():
     assert c.input_dict == {
         "traceWidth": 0.2, "heightToNearPlane": 0.2, "heightToFarPlane": 1.04,
         "copperThickness": 35.0,
-        "dielectricConst": er((200000, 4.4), (1040000, 4.6)),
+        "dielectricConst": er((200000, 4.4), (1040000, 4.6)), "frequency": 2.4,
     }
 
 
@@ -65,6 +66,7 @@ def test_six_layer_stripline_combines_prepreg_and_core():
         "heightToFarPlane": 0.6625,  # 230 µm prepreg + In3.Cu's 17.5 µm + 415 µm core
         "copperThickness": 17.5,
         "dielectricConst": er((415000, 4.6), (230000, 4.4), (415000, 4.6)),
+        "frequency": 2.4,
     }
 
 
@@ -85,7 +87,7 @@ def test_coplanar_waveguide_on_an_outer_layer():
     assert c.slug == "coplanar-waveguide"
     assert c.input_dict == {
         "structure": 1, "traceWidth": 1.0, "gapWidth": 0.25, "substrateHeight": 1.51,
-        "dielectricConst": 4.5, "copperThickness": 35.0,
+        "dielectricConst": 4.5, "copperThickness": 35.0, "frequency": 2.4,
     }
     assert M.coplanar(layer_model(two_layer()), "F.Cu", 1.0, 0.25, grounded=False).input_dict[
         "structure"
@@ -102,7 +104,7 @@ def test_outer_pair_is_differential_pair_with_dielectric_constant():
     assert c.slug == "differential-pair" and c.output == "zdiff"
     assert c.input_dict == {
         "traceWidth": 0.15, "traceSpacing": 0.2, "substrateHeight": 0.2,
-        "dielectricConstant": 4.4, "copperThickness": 35.0,
+        "dielectricConstant": 4.4, "copperThickness": 35.0, "frequency": 2.4,
     }
 
 
@@ -113,6 +115,7 @@ def test_inner_pair_off_centre_is_the_asymmetric_calculator():
         "traceWidth": 0.1, "traceSpacing": 0.15, "heightBelow": 0.6625, "heightAbove": 0.415,
         "copperThickness": 17.5,
         "dielectricConst": er((415000, 4.6), (230000, 4.4), (415000, 4.6)),
+        "frequency": 2.4,
     }
 
 
@@ -125,6 +128,7 @@ def test_inner_pair_centred_is_the_symmetric_calculator_plane_to_plane():
     assert c.input_dict == {
         "traceWidth": 0.12, "traceSpacing": 0.18, "planeSpacing": (200000 + 200000 + 35000) / 1e6,
         "copperThickness": 35.0, "dielectricConst": er((200000, 4.4), (200000, 4.6)),
+        "frequency": 2.4,
     }
 
 
@@ -137,6 +141,7 @@ def test_current_on_an_outer_layer():
     assert c.input_dict == {
         "current": 2, "copperWeight": 1.0, "tempRise": 10.0, "traceLength": 100, "isExternal": 1,
         "traceWidth": 0.5, "boardThickness": 1.6, "planeDistance": 0, "planeCopperWeight": 0.5,
+        "standard": 0,  # the chart of the check, never a width: the calculator's default
     }
     assert c.out_of_range == ()
 
@@ -148,7 +153,7 @@ def test_current_on_an_inner_half_ounce_layer_with_options():
         "current": 1.5, "copperWeight": 0.5, "tempRise": 20, "traceLength": 50, "isExternal": 0,
         "traceWidth": 0.5, "boardThickness": 1.6,
         # In4.Cu, 0.415 mm of core below; In1.Cu is 0.6625 mm above.
-        "planeDistance": 0.415, "planeCopperWeight": 0.5,
+        "planeDistance": 0.415, "planeCopperWeight": 0.5, "standard": 0,
     }
 
 
@@ -177,6 +182,7 @@ def test_current_on_an_outer_layer_over_a_plane():
     assert c.input_dict == {
         "current": 2, "copperWeight": 1.0, "tempRise": 10.0, "traceLength": 100, "isExternal": 1,
         "traceWidth": 0.5, "boardThickness": 1.6, "planeDistance": 0.2, "planeCopperWeight": 1.0,
+        "standard": 0,
     }
     # B.Cu's plane is inward of it, above.
     plane = model.nearest_plane("B.Cu")

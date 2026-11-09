@@ -561,6 +561,14 @@ def _structure(model: LayerModel, layer: str) -> Structure:
     return s
 
 
+#: Inputs that set no figure the plugin shows, always sent at the calculator's
+#: default so a request names every input the calculator declares (the golden
+#: cases record them): the frequency of the guided wavelength, which no
+#: impedance reads, and the chart a current is checked against, which never
+#: sets a width. rftools.io's site redesign added both.
+UNREAD_INPUTS = ("frequency", "standard")
+
+
 def _complete(slug: str, mapped: Mapping[str, float], from_defaults=()) -> Computation:
     """Every input *slug* declares, in its order: the mapped value or its default."""
     specs = calculator(slug)["inputs"]
@@ -573,7 +581,7 @@ def _complete(slug: str, mapped: Mapping[str, float], from_defaults=()) -> Compu
         key = spec["key"]
         if key in mapped:
             value = mapped[key]
-        elif key in from_defaults:
+        elif key in from_defaults or key in UNREAD_INPUTS:
             value = spec["default"]
         else:
             raise MappingError(f"{slug}: nothing maps {key}")

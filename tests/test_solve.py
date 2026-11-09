@@ -68,7 +68,7 @@ def test_g1_shows_the_golden_grid_width_after_exactly_one_call(tmp_path):
     assert body == {
         "slug": "microstrip-impedance",
         "inputs": {"traceWidth": 0.3, "substrateHeight": 1.51, "dielectricConstant": 4.5,
-                   "copperThickness": 35.0},
+                   "copperThickness": 35.0, "frequency": 2.4},
         "solveFor": "traceWidth",
         "target": {"output": "impedance", "value": 50.0},
         "grid": case["solve"]["grid"],
@@ -100,12 +100,24 @@ def test_an_unreachable_target_reports_the_nearest_impedance():
     assert "The target was not reached." in result.warnings
 
 
-def test_the_search_range_is_supplied_only_where_the_calculator_states_no_maximum():
-    assert search_range("microstrip-impedance", "traceWidth") is None
-    assert search_range("differential-pair", "traceSpacing") is None
+def test_the_search_range_is_supplied_only_where_the_calculator_states_no_maximum(monkeypatch):
+    # Since rftools.io's site redesign every width and gap the plugin solves for
+    # states both bounds, so the API searches the stated range.
+    for slug, key in [
+        ("microstrip-impedance", "traceWidth"),
+        ("differential-pair", "traceSpacing"),
+        ("asymmetric-stripline", "traceWidth"),
+        ("edge-coupled-internal-asymmetric", "traceSpacing"),
+        ("edge-coupled-internal-symmetric", "traceSpacing"),
+        ("controlled-impedance", "traceWidth"),
+        ("coplanar-waveguide", "traceWidth"),
+    ]:
+        assert search_range(slug, key) is None, (slug, key)
+    # An input stating no maximum is searched from its minimum to SEARCH_MAX_MM.
+    import rftools_kicad.solve as S
+
+    monkeypatch.setattr(S, "input_spec", lambda slug, key: {"key": key, "min": 0.02, "max": None})
     assert search_range("asymmetric-stripline", "traceWidth") == (0.02, SEARCH_MAX_MM)
-    assert search_range("edge-coupled-internal-asymmetric", "traceSpacing") == (0.02, SEARCH_MAX_MM)
-    assert search_range("controlled-impedance", "traceWidth") == (0.05, SEARCH_MAX_MM)
 
 
 def test_a_pair_solves_for_its_gap():
@@ -115,7 +127,7 @@ def test_a_pair_solves_for_its_gap():
     inner = target_request(differential(model, "In2.Cu", 0.1, 0.15), 100, grid=0.005)
     assert inner.payload()["solveFor"] == "traceSpacing"
     assert inner.payload()["target"] == {"output": "diffImpedance", "value": 100.0}
-    assert inner.payload()["range"] == [0.02, SEARCH_MAX_MM]
+    assert "range" not in inner.payload()  # the calculator states a 10 mm maximum
     assert inner.payload()["grid"] == 0.005
 
 
