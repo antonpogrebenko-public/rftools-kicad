@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Draw the plugin's icons: a microstrip cross-section (trace, dielectric, plane).
+"""Draw the plugin's icons: the rftools.io logo mark.
 
-    resources/icon.png                 64 x 64, the PCM package icon (on a badge)
+    resources/icon.png                 64 x 64, the PCM package icon
     plugins/icons/rftools-light-24.png toolbar icon for light themes, and 48 px
     plugins/icons/rftools-dark-24.png  toolbar icon for dark themes, and 48 px
+
+Every icon is the site's mark (frontend/src/components/instrument/icons/
+LogoMark.tsx), which is the same on light and dark pages; tests/test_icons.py
+compares LOGO with it when the monorepo is present.
 
 Pure Python (zlib + struct), so the output is byte-for-byte reproducible and
 needs no imaging library:
@@ -22,54 +26,52 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SUPERSAMPLE = 8
 
-BLUE = (0x25, 0x63, 0xEB)  # rftools.io --eng-blue (light)
-BLUE_DARK = (0x3B, 0x82, 0xF6)  # --eng-blue (dark)
-INK = (0x1F, 0x29, 0x37)
-PAPER = (0xE5, 0xE7, 0xEB)
 WHITE = (0xFF, 0xFF, 0xFF)
 
-# Shapes in unit coordinates (0..1), drawn in order: (kind, box, rgb, alpha).
-# The glyph: a copper trace on a dielectric over a ground plane.
-# The badge leaves a margin inside its rounded square; a toolbar glyph fills
-# its frame, as KiCad's own toolbar icons do.
-BADGE_GLYPH = {
-    "trace": (0.36, 0.30, 0.64, 0.44),
-    "dielectric": (0.14, 0.44, 0.86, 0.66),
-    "plane": (0.14, 0.66, 0.86, 0.76),
-}
-TOOLBAR_GLYPH = {
-    "trace": (0.33, 0.18, 0.67, 0.38),
-    "dielectric": (0.04, 0.38, 0.96, 0.70),
-    "plane": (0.04, 0.70, 0.96, 0.84),
+#: The rftools.io logo mark in the site's own units (LogoMark.tsx, viewBox 22):
+#: a blue rounded square, two white rings (the second at 75 % opacity) and a
+#: white line across the middle, drawn in that order.
+LOGO_VIEWBOX = 22
+LOGO = {
+    "rect": {"size": 22, "rx": 5, "fill": "#2563eb"},
+    "rings": [
+        {"cx": 11, "cy": 11, "r": 6.5, "stroke": 1.4, "opacity": 1.0},
+        {"cx": 13.2, "cy": 11, "r": 4.3, "stroke": 1.1, "opacity": 0.75},
+    ],
+    "line": {"x0": 4.5, "x1": 17.5, "y": 11, "stroke": 1.1},
 }
 
 
-def _glyph(boxes, ink, fill, fill_alpha):
-    return [
-        ("rect", boxes["dielectric"], fill, fill_alpha),
-        ("rect", boxes["plane"], ink, 1.0),
-        ("rect", boxes["trace"], ink, 1.0),
-    ]
+def _rgb(hex_colour: str) -> tuple:
+    value = hex_colour.lstrip("#")
+    return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
 
 
-def badge_shapes():
-    background = [("rounded", (0.0, 0.0, 1.0, 1.0), BLUE, 1.0)]
-    return background + _glyph(BADGE_GLYPH, WHITE, WHITE, 0.38)
-
-
-def toolbar_shapes(dark: bool):
-    if dark:
-        return _glyph(TOOLBAR_GLYPH, PAPER, BLUE_DARK, 0.75)
-    return _glyph(TOOLBAR_GLYPH, INK, BLUE, 0.65)
+def logo_shapes():
+    """The mark as shapes in unit coordinates (0..1): (kind, box, rgb, alpha)."""
+    u = 1 / LOGO_VIEWBOX
+    rect, line = LOGO["rect"], LOGO["line"]
+    shapes = [("rounded", (0.0, 0.0, 1.0, 1.0, rect["rx"] * u), _rgb(rect["fill"]), 1.0)]
+    for ring in LOGO["rings"]:
+        box = (ring["cx"] * u, ring["cy"] * u, ring["r"] * u, ring["stroke"] * u)
+        shapes.append(("ring", box, WHITE, ring["opacity"]))
+    half = line["stroke"] / 2  # an SVG line's butt caps end exactly at x0 and x1
+    box = (line["x0"] * u, (line["y"] - half) * u, line["x1"] * u, (line["y"] + half) * u)
+    shapes.append(("rect", box, WHITE, 1.0))
+    return shapes
 
 
 def _inside(kind, box, x, y):
-    x0, y0, x1, y1 = box
+    if kind == "ring":  # box: centre x, centre y, radius, stroke width
+        cx, cy, r, stroke = box
+        distance = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
+        return r - stroke / 2 <= distance <= r + stroke / 2
+    x0, y0, x1, y1 = box[:4]
     if not (x0 <= x <= x1 and y0 <= y <= y1):
         return False
     if kind == "rect":
         return True
-    r = 0.1875 * (x1 - x0)
+    r = box[4]  # "rounded": box carries its corner radius
     cx = min(max(x, x0 + r), x1 - r)
     cy = min(max(y, y0 + r), y1 - r)
     return (x - cx) ** 2 + (y - cy) ** 2 <= r * r
@@ -124,11 +126,11 @@ def png(size: int, rows: bytes) -> bytes:
 
 
 def targets():
-    yield ROOT / "resources" / "icon.png", 64, badge_shapes()
+    yield ROOT / "resources" / "icon.png", 64, logo_shapes()
     for theme in ("light", "dark"):
         for size in (24, 48):
             path = ROOT / "plugins" / "icons" / f"rftools-{theme}-{size}.png"
-            yield path, size, toolbar_shapes(theme == "dark")
+            yield path, size, logo_shapes()
 
 
 def main(argv=None) -> int:
