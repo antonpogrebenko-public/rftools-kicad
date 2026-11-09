@@ -141,7 +141,7 @@ KiCad applies the change to the open project's settings in memory. It reaches th
 
 ### KiCad 10.0.6 and earlier: enter the values by hand
 
-KiCad 10.0.6 and earlier corrupt a net class written through the API. The class loses its nets: none of its nets belong to it any more. Writing the old values back does not repair it, and the next save hangs KiCad on Linux or crashes it on Windows. KiCad fixed this on 22 September 2026 (commit `d622c37a`, "API: Fix handling of netclasses"), but no KiCad release had the fix yet as of 25 September 2026. The first one will be a later 10.0.x or 11.x release.
+KiCad 10.0.6 and earlier corrupt a net class written through the API. The class loses its nets: none of its nets belong to it any more. Writing the old values back does not repair it, and the next save hangs KiCad on Linux or crashes it on Windows. KiCad fixed this on 22 September 2026 (commit `d622c37a`, "API: Fix handling of netclasses"), and KiCad 10.0.7 (6 October 2026) is the first release with the fix.
 
 So the plugin writes net classes only on a KiCad later than 10.0.6. On 10.0.6 and earlier, or when it cannot read KiCad's version, it writes nothing:
 

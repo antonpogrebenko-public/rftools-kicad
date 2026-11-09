@@ -75,7 +75,7 @@ Run this on the first release that contains KiCad commit `d622c37a` (a later 10.
 
 ## Install from the custom repository (task 6.2)
 
-Not yet run: it needs the repository public and `v0.1.0` released. On at least two platforms (one Windows or macOS, one Linux), with the interpreter left at KiCad's default:
+Not yet run. KiCad 10.0.7 (6 October 2026) and 10.0.8 carry the net-class fix, so step 3's write can be tried on either. On at least two platforms (one Windows or macOS, one Linux), with the interpreter left at KiCad's default:
 
 1. Add `https://antonpogrebenko-public.github.io/rftools-kicad/repository.json` in the Plugin and Content Manager, install the plugin, and apply. Nothing else is installed first: no Python, no packages (on Linux, only the distribution's `python3-venv` and `python3-wxgtk4.0`).
 2. Run G1, G2, G3 and G3b on boards built from the stackups in `golden/kicad-golden.json`. Each result must match the golden file to a relative 1e-6. KiCad reports no layer types, so for G2 and G3b untick the signal layers first, leaving the case's power layers as the planes. G3's current row then credits no plane, and G3b's credits In1.Cu, a ½ oz plane 0.2 mm under F.Cu: its suggested width is the rftools thermal model's (board-specific), 0.5423 mm, with IPC-2152 Fig. 5-1's 2.0329 mm beside it.
