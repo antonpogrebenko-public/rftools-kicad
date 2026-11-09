@@ -51,14 +51,19 @@ def present(model: Any, netclasses: list, services: Any) -> int:
 
         return report.present(model, netclasses, services)
     state = DialogState(model, netclasses, services)
+    show(state)
+    _save_options(state, services)
+    del app
+    return 0
+
+
+def show(state: DialogState) -> None:
+    """The native dialog on *state*, modal; also the web window's fallback."""
     dialog = MainDialog(None, state)
     try:
         dialog.ShowModal()
     finally:
         dialog.Destroy()
-    _save_options(state, services)
-    del app
-    return 0
 
 
 def _save_options(state: DialogState, services: Any) -> None:

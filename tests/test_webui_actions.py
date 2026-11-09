@@ -167,3 +167,18 @@ def test_the_window_page_carries_the_bridge(tmp_path):
     state, _ = project_state(tmp_path)
     page = U.page(U.start(state), theme="dark")
     assert "window.rftoolsUpdate" in page and "rftools" in page and '"ready"' in page
+
+
+def test_reply_turns_a_message_into_the_regions_to_update(tmp_path):
+    import json
+
+    state, _ = project_state(tmp_path)
+    session, ui = U.start(state), FakeUi()
+    assert U.reply(session, '{"action": "ready"}', ui) == U.Reply(ready=True)
+    typed = U.reply(session, json.dumps(
+        {"action": "form", "name": "HighSpeed", "field": "current", "value": "2"}), ui)
+    assert typed.script.startswith("rftoolsUpdate(") and typed.script.endswith(");")
+    assert list(json.loads(typed.script[len("rftoolsUpdate("):-2])) == ["footer"]
+    assert U.reply(session, "not json", ui) == U.Reply()
+    assert U.reply(session, '["a list"]', ui) == U.Reply()
+    assert U.reply(session, '{"action": "close"}', ui).close

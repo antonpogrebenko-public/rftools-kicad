@@ -192,6 +192,8 @@ def test_the_presenter_is_the_dialog_else_the_report_else_the_stub(monkeypatch):
     loadable = {"rftools_kicad.dialog", "rftools_kicad.report"}
 
     def import_module(name, *args):
+        if name == "rftools_kicad.webdialog":  # its own order test is in test_webdialog.py
+            raise ImportError(name)
         if name in ("rftools_kicad.dialog", "rftools_kicad.report") and name not in loadable:
             raise ImportError(f"no {name}")
         if name == "rftools_kicad.dialog":

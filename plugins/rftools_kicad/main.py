@@ -260,10 +260,11 @@ def present(model: Any, netclasses: List[Any], services: Services) -> int:
 
 
 def presenter() -> Callable[..., int]:
-    """The first presentation layer that loads: the dialog, the HTML report, the stub."""
+    """The first presentation layer that loads: the window in rftools.io's design
+    (a web view), the native dialog, the HTML report, the stub."""
     import importlib
 
-    for name in ("rftools_kicad.dialog", "rftools_kicad.report"):
+    for name in ("rftools_kicad.webdialog", "rftools_kicad.dialog", "rftools_kicad.report"):
         try:
             module = importlib.import_module(name)
         except Exception:  # wx missing, or failing to load its libraries

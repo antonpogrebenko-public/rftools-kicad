@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import html
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import lru_cache
@@ -855,3 +856,36 @@ _ACTIONS = {
     "write": _write, "restore": _restore, "confirm": _confirm, "copy_values": _copy_values,
     "close_panel": _close_panel, "open": _open, "close": _close,
 }
+
+
+@dataclass(frozen=True)
+class Reply:
+    """What the window does with a page message: a script to run, close, or ready."""
+
+    script: str | None = None
+    close: bool = False
+    ready: bool = False
+
+
+def reply(session: Session, raw: str, ui: UiPort) -> Reply:
+    """The page posted *raw* (JSON): handle it and say which regions to replace."""
+    try:
+        message = json.loads(raw)
+    except (TypeError, ValueError):
+        return Reply()
+    if not isinstance(message, dict):
+        return Reply()
+    if message.get("action") == "ready":
+        return Reply(ready=True)
+    update = handle(session, message, ui)
+    if update.close:
+        return Reply(close=True)
+    if not update.regions:
+        return Reply()
+    return Reply(script=update_script(session, update.regions))
+
+
+def update_script(session: Session, names: Sequence[str]) -> str:
+    """The script that replaces regions *names* with their current HTML."""
+    regions = render_regions(session)
+    return f"rftoolsUpdate({json.dumps({name: regions[name] for name in names})});"
